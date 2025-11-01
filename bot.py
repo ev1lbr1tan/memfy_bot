@@ -29,22 +29,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Привет! Я бот для создания мемов и демотиваторов.\n\n"
             "Чтобы создать мем в группе:\n"
             "1. Отправь фото с подписью: @memfy_bot\n"
-            "2. Выбери тип: классический мем или демотиватор\n"
+            "2. Выбери тип: классический мем или \n"
             "3. Для классического мема - отправь текст в формате 'Верхний|Нижний'\n"
-            "4. Для демотиватора - выбери шрифт, тип, размер, цвет и отправь текст\n\n"
+            "4. Для а - выбери шрифт, тип, размер, цвет и отправь текст\n\n"
             "Или отправь фото с подписью: @memfy_bot Верхний текст|Нижний текст"
         )
     else:
         await update.message.reply_text(
-            "Привет! Я бот для создания мемов и демотиваторов.\n\n"
+            "Привет! Я бот для создания мемов и ов.\n\n"
             "Как пользоваться:\n"
             "1. Отправь мне фото\n"
-            "2. Выбери тип: классический мем или демотиватор\n"
+            "2. Выбери тип: классический мем или \n"
             "3. Для классического мема:\n"
             "   - Выбери шрифт (Impact или Lobster)\n"
             "   - Выбери тип (верх+низ или только внизу)\n"
             "   - Отправь текст\n"
-            "4. Для демотиватора:\n"
+            "4. Для а:\n"
             "   - Выбери шрифт\n"
             "   - Выбери тип демотиватора\n"
             "   - Выбери размер и цвет шрифта\n"
@@ -336,7 +336,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     result_msg = await query.message.reply_animation(animation=meme, caption="Ваш мем готов!\n\n @memfy_bot\n")
                 else:
                     meme = create_classic_meme(photo_bytes, top_text, bottom_text, classic_font)
-                    result_msg = await query.message.reply_photo(photo=meme, caption="Ваш мем готов!")
+                    result_msg = await query.message.reply_photo(photo=meme, caption="Ваш мем готов!\n\n @memfy_bot\n")
                 
                 # Удаляем само сообщение с кнопками после отправки результата
                 try:
@@ -608,7 +608,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if is_gif:
                 meme = create_classic_meme_gif(photo_bytes, top_text, bottom_text, classic_font)
-                result_msg = await update.message.reply_animation(animation=meme, caption="Ваш мем готов! @memfy_bot")
+                result_msg = await update.message.reply_animation(animation=meme, caption="Ваш мем готов!\n\n @memfy_bot\n")
             else:
                 meme = create_classic_meme(photo_bytes, top_text, bottom_text, classic_font)
                 result_msg = await update.message.reply_photo(photo=meme, caption="Ваш мем готов! @memfy_bot")
@@ -660,7 +660,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             font_file = user_data[user_id]['font_file']
             font_color = user_data.get(user_id, {}).get('font_color', 'white')
             demotivator = create_demotivator(photo_bytes, top_text, bottom_text, font_size, font_file, demotivator_type, font_color)
-            result_msg = await update.message.reply_photo(photo=demotivator, caption="Ваш демотиватор готов!")
+            result_msg = await update.message.reply_photo(photo=demotivator, caption="Ваш демотиватор готов!\n\n @memfy_bot\n")
             
             # Удаляем сообщение пользователя с текстом после отправки результата
             try:
@@ -1288,4 +1288,5 @@ def main():
 
 
 if __name__ == '__main__':
+
     main()
