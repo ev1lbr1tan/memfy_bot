@@ -25,6 +25,21 @@ user_messages = {}
 # Ссылка на DonationAlerts
 DONATION_URL = "https://dalink.to/ev1lbr1tan"
 
+# Список шрифтов, которые бот умеет использовать (имена файлов)
+AVAILABLE_FONT_FILES = [
+    "Molodost.ttf",
+    "Roboto_Bold.ttf",
+    "Times New Roman Bold Italic.ttf",
+    "Nougat Regular.ttf",
+    "Maratype Regular.ttf",
+    "Farabee Bold.ttf",
+    "Impact.ttf",
+    "Anton-Regular.ttf",            # загружённый пользователем
+    "Comic Sans MS.ttf",            # загружённый пользователем
+    "Arial_black.ttf",              # загружённый пользователем
+    "Lobster.ttf",
+]
+
 
 def check_fonts_presence():
     """Логируем наличие известных шрифтов в ./fonts"""
@@ -204,15 +219,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("⚪ Белый", callback_data="color_white"),
             ],
             [
+                InlineKeyboardButton("🟡 Жёлтый", callback_data="color_yellow"),
+                InlineKeyboardButton("🟠 Оранжевый", callback_data="color_orange"),
+            ],
+            [
                 InlineKeyboardButton("🔵 Синий", callback_data="color_blue"),
                 InlineKeyboardButton("🟢 Зелёный", callback_data="color_green"),
             ],
             [
                 InlineKeyboardButton("🟣 Фиолетовый", callback_data="color_purple"),
+                InlineKeyboardButton("🟤 Коричневый", callback_data="color_brown"),
             ],
             [
+                InlineKeyboardButton("⚫ Чёрный", callback_data="color_black"),
+                InlineKeyboardButton("⬜ Серый", callback_data="color_gray"),
+            ],
+            [
+                InlineKeyboardButton("🩷 Розовый", callback_data="color_pink"),
                 InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-                InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -228,23 +252,60 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     color_map = {
         "color_red": "red",
         "color_white": "white",
+        "color_yellow": "yellow",
+        "color_orange": "orange",
         "color_blue": "blue",
         "color_green": "green",
         "color_purple": "purple",
+        "color_brown": "brown",
+        "color_black": "black",
+        "color_gray": "gray",
+        "color_pink": "pink",
     }
     
     color_names = {
         "color_red": "Красный",
         "color_white": "Белый",
+        "color_yellow": "Жёлтый",
+        "color_orange": "Оранжевый",
         "color_blue": "Синий",
         "color_green": "Зелёный",
         "color_purple": "Фиолетовый",
+        "color_brown": "Коричневый",
+        "color_black": "Чёрный",
+        "color_gray": "Серый",
+        "color_pink": "Розовый",
     }
     
     if query.data in color_map:
         user_data[user_id]['font_color'] = color_map[query.data]
         
         if user_data.get(user_id, {}).get('meme_type') == 'meme_demotivator':
+            keyboard = [
+                [
+                    InlineKeyboardButton("🖤 Чёрный (классика)", callback_data="bg_black"),
+                    InlineKeyboardButton("⚪ Белый", callback_data="bg_white"),
+                ],
+                [
+                    InlineKeyboardButton("⬛ Тёмно-серый", callback_data="bg_dark_gray"),
+                    InlineKeyboardButton("⬜ Светло-серый", callback_data="bg_light_gray"),
+                ],
+                [
+                    InlineKeyboardButton("🔵 Синий", callback_data="bg_blue"),
+                    InlineKeyboardButton("🟢 Зелёный", callback_data="bg_green"),
+                ],
+                [
+                    InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
+                ]
+            ]
+            await query.edit_message_text(
+                f"✅ Цвет шрифта установлен: **{color_names[query.data]}**\n\n"
+                "Выбери цвет фона для демотиватора:",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+        else:
             keyboard = [
                 [
                     InlineKeyboardButton("Тонкая (4px)", callback_data="thickness_thin"),
@@ -267,20 +328,45 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        if 'photo' in user_data.get(user_id, {}) and 'font_file' in user_data.get(user_id, {}):
-            await query.edit_message_text(
-                f"✅ Цвет шрифта установлен: **{color_names[query.data]}**\n\n"
-                "Теперь отправь текст в формате:\n"
-                "- 'Верхний текст|Нижний текст' (для обычного)\n"
-                "- 'Текст' (для типа 'внизу')",
-                parse_mode='Markdown'
-            )
-        else:
-            await query.edit_message_text(
-                f"✅ Цвет шрифта установлен: **{color_names[query.data]}**\n\n"
-                "Теперь отправь фото с текстом или просто фото.",
-                parse_mode='Markdown'
-            )
+    bg_map = {
+        "bg_black": (0, 0, 0),
+        "bg_white": (255, 255, 255),
+        "bg_dark_gray": (50, 50, 50),
+        "bg_light_gray": (200, 200, 200),
+        "bg_blue": (0, 0, 139),
+        "bg_green": (0, 100, 0),
+    }
+
+    bg_names = {
+        "bg_black": "Чёрный (классика)",
+        "bg_white": "Белый",
+        "bg_dark_gray": "Тёмно-серый",
+        "bg_light_gray": "Светло-серый",
+        "bg_blue": "Синий",
+        "bg_green": "Зелёный",
+    }
+
+    if query.data in bg_map:
+        user_data[user_id]['bg_color'] = bg_map[query.data]
+        await query.edit_message_text(
+            f"✅ Цвет фона установлен: **{bg_names[query.data]}**\n\n"
+            "Выбери толщину обводки (рамки) для фотографии в демотиваторе:",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("Тонкая (4px)", callback_data="thickness_thin"),
+                    InlineKeyboardButton("Обычная (10px)", callback_data="thickness_normal"),
+                ],
+                [
+                    InlineKeyboardButton("Толстая (20px)", callback_data="thickness_thick"),
+                    InlineKeyboardButton("Очень толстая (30px)", callback_data="thickness_xthick"),
+                ],
+                [
+                    InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
+                    InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
+                ],
+            ])
+        )
         return
 
     thickness_map = {
@@ -535,21 +621,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "shakalize_menu":
         keyboard = [
             [
-                InlineKeyboardButton("Лёгкая засвалка", callback_data="shakalize_light"),
-                InlineKeyboardButton("Средняя засвалка", callback_data="shakalize_medium"),
+                InlineKeyboardButton("Мягкая зашакалка", callback_data="shakalize_mild"),
+                InlineKeyboardButton("Лёгкая зашакалка", callback_data="shakalize_light"),
             ],
             [
-                InlineKeyboardButton("Жёсткая засвалка", callback_data="shakalize_hard"),
+                InlineKeyboardButton("Средняя зашакалка", callback_data="shakalize_medium"),
+                InlineKeyboardButton("Жёсткая зашакалка", callback_data="shakalize_hard"),
+            ],
+            [
+                InlineKeyboardButton("Экстремальная зашакалка", callback_data="shakalize_extreme"),
+            ],
+            [
+                InlineKeyboardButton("Глитч-эффект 💥", callback_data="shakalize_glitch"),
             ],
             [
                 InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
                 InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
             ]
         ]
-        await query.edit_message_text("Выбери уровень ухудшения (шакализации):", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("Выбери уровень ухудшения (шакализации) или эффект:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    if query.data in ["shakalize_light", "shakalize_medium", "shakalize_hard"]:
+    if query.data in ["shakalize_mild", "shakalize_light", "shakalize_medium", "shakalize_hard", "shakalize_extreme", "shakalize_glitch"]:
         level = query.data.split('_')[-1]
         try:
             if 'photo' not in user_data.get(user_id, {}):
@@ -674,9 +767,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("Зашакалить 🛠️", callback_data="shakalize_menu"),
-        ],
-        [
-            InlineKeyboardButton("Поддержать бота 💰", url=DONATION_URL),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -796,7 +886,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             font_file = user_data[user_id]['font_file']
             font_color = user_data.get(user_id, {}).get('font_color', 'white')
             border_thickness = user_data.get(user_id, {}).get('border_thickness', 10)
-            demotivator = create_demotivator(photo_bytes, top_text, bottom_text, font_size, font_file, demotivator_type, font_color, border_thickness)
+            bg_color = user_data.get(user_id, {}).get('bg_color', (0, 0, 0))
+            demotivator = create_demotivator(photo_bytes, top_text, bottom_text, font_size, font_file, demotivator_type, font_color, border_thickness, bg_color)
             result_msg = await update.message.reply_photo(photo=demotivator, caption="Ваш демотиватор готов!\n\n @memfy_bot", reply_markup=get_donation_keyboard())
             
             try:
@@ -804,28 +895,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 pass
         
-        for key in ['photo', 'meme_type', 'classic_font', 'classic_type', 'is_gif']:
+        for key in ['photo', 'meme_type', 'classic_font', 'classic_type', 'is_gif', 'font_color', 'bg_color', 'border_thickness']:
             user_data[user_id].pop(key, None)
         
     except Exception as e:
         logger.error(f"Ошибка при создании мема: {e}")
         await update.message.reply_text("Произошла ошибка при создании мема. Попробуй еще раз.")
-
-
-# Список шрифтов, которые бот умеет использовать (имена файлов)
-AVAILABLE_FONT_FILES = [
-    "Molodost.ttf",
-    "Roboto_Bold.ttf",
-    "Times New Roman Bold Italic.ttf",
-    "Nougat Regular.ttf",
-    "Maratype Regular.ttf",
-    "Farabee Bold.ttf",
-    "Impact.ttf",
-    "Anton-Regular.ttf",            # загружённый пользователем
-    "Comic Sans MS.ttf",            # загружённый пользователем
-    "Arial_black.ttf",              # загружённый пользователем
-    "Lobster.ttf",
-]
 
 
 def create_classic_meme(photo_bytes: io.BytesIO, top_text: str, bottom_text: str, font_file: str = "Impact.ttf") -> io.BytesIO:
@@ -1098,7 +1173,7 @@ def create_classic_meme_gif(photo_bytes: io.BytesIO, top_text: str, bottom_text:
 def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str, 
                       font_size: dict = None, font_file: str = "Roboto_Bold.ttf", 
                       demotivator_type: str = "type_normal", font_color: str = "white",
-                      border_thickness: int = 10) -> io.BytesIO:
+                      border_thickness: int = 10, bg_color: tuple = (0, 0, 0)) -> io.BytesIO:
     if font_size is None:
         font_size = {"top": 40, "bottom": 28}
     top_font_size = font_size.get("top", 40)
@@ -1106,9 +1181,15 @@ def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str,
     color_map = {
         "red": (255, 0, 0),
         "white": (255, 255, 255),
+        "yellow": (255, 255, 0),
+        "orange": (255, 165, 0),
         "blue": (0, 0, 255),
         "green": (0, 255, 0),
         "purple": (128, 0, 128),
+        "brown": (165, 42, 42),
+        "black": (0, 0, 0),
+        "gray": (128, 128, 128),
+        "pink": (255, 192, 203),
     }
     text_color = color_map.get(font_color, (255, 255, 255))
     photo_bytes.seek(0)
@@ -1134,7 +1215,7 @@ def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str,
     top_space = 80 if demotivator_type == "type_normal" else 20
     demotivator_width = img_width + (total_padding * 2)
     demotivator_height = img_height + (total_padding * 2) + (200 if demotivator_type == "type_normal" else 120)
-    demotivator = Image.new('RGB', (demotivator_width, demotivator_height), color='black')
+    demotivator = Image.new('RGB', (demotivator_width, demotivator_height), color=bg_color)
     photo_x = total_padding
     photo_y = total_padding + top_space
     demotivator.paste(image, (photo_x, photo_y))
@@ -1247,7 +1328,11 @@ def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.Byte
     im = Image.open(photo_bytes)
     if im.mode != 'RGB':
         im = im.convert('RGB')
-    if intensity == 'light':
+    if intensity == 'mild':
+        downscale = 0.8
+        poster_bits = 6
+        jpeg_quality = 50
+    elif intensity == 'light':
         downscale = 0.6
         poster_bits = 5
         jpeg_quality = 35
@@ -1255,6 +1340,33 @@ def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.Byte
         downscale = 0.35
         poster_bits = 4
         jpeg_quality = 20
+    elif intensity == 'hard':
+        downscale = 0.14
+        poster_bits = 3
+        jpeg_quality = 8
+    elif intensity == 'extreme':
+        downscale = 0.05
+        poster_bits = 2
+        jpeg_quality = 5
+    elif intensity == 'glitch':
+        # Глитч-эффект: разделение каналов, сдвиг и шум
+        r, g, b = im.split()
+        r = r.offset((random.randint(-10, 10), random.randint(-5, 5)))
+        g = g.offset((random.randint(-5, 5), random.randint(-10, 10)))
+        b = b.offset((random.randint(-10, 10), random.randint(-5, 5)))
+        im_glitch = Image.merge('RGB', (r, g, b))
+        im_glitch = im_glitch.filter(ImageFilter.GaussianBlur(random.uniform(0.5, 1.5)))
+        # Добавляем шум
+        noise = Image.new('RGB', im_glitch.size, (0, 0, 0))
+        noise_pixels = noise.load()
+        for i in range(im_glitch.size[0]):
+            for j in range(im_glitch.size[1]):
+                noise_pixels[i, j] = (random.randint(0, 50), random.randint(0, 50), random.randint(0, 50))
+        im_glitch = Image.composite(im_glitch, noise, noise).convert('RGB')
+        out = io.BytesIO()
+        im_glitch.save(out, format='JPEG', quality=30, optimize=False)
+        out.seek(0)
+        return out
     else:
         downscale = 0.14
         poster_bits = 3
