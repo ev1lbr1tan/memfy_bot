@@ -13,17 +13,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# === ШРИФТЫ РЯДОМ С bot.py ===
-FONT_DIR = os.path.dirname(__file__)  # ← шрифты в той же папке
+# === ПАПКА СО ШРИФТАМИ И ГИФКОЙ ===
+FONT_DIR = os.path.dirname(__file__)  # ← всё в одной папке с bot.py
 
 # === ХРАНИЛИЩЕ ===
 user_data = {}
 user_messages = {}
 
-# === ДОНАТ ===
+# === ДОНАТ (только в мемах) ===
 DONATION_URL = "https://dalink.to/ev1lbr1tan"
 
-# === СПИСОК ШРИФТОВ (должны быть рядом с bot.py) ===
+# === СПИСОК ШРИФТОВ ===
 AVAILABLE_FONT_FILES = [
     "Molodost.ttf", "Roboto_Bold.ttf", "Times New Roman Bold Italic.ttf",
     "Nougat Regular.ttf", "Maratype Regular.ttf", "Farabee Bold.ttf",
@@ -41,7 +41,7 @@ def check_fonts_presence():
         else:
             logger.warning(f"Шрифт НЕ найден: {fname}")
 
-# === ДОНАТ КНОПКА ===
+# === ДОНАТ КНОПКА (только для мемов) ===
 def get_donation_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("Донат", url=DONATION_URL)]])
 
@@ -54,24 +54,10 @@ async def safe_reply(message, text: str, **kwargs):
         logger.warning(f"Markdown failed: {e}")
         return await message.reply_text(clean, **kwargs)
 
-# === /start ===
+# === /start (без текста и кнопки) ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    reply_markup = get_donation_keyboard()
-    if update.message.chat.type in ['group', 'supergroup']:
-        await safe_reply(update.message,
-            "Фотку + @memfy_bot = мем, демотиватор или шакал\n"
-            "(качество не гарантирую, но посмеёмся точно)",
-            reply_markup=reply_markup
-        )
-    else:
-        await safe_reply(update.message,
-            "Прикрепи фото — я сделаю из него **мем, демотиватор или шакал**\n"
-            "(качество не гарантирую, но посмеёмся точно)\n\n"
-            "• Отправь фото → выбери тип → настрой → отправь текст\n"
-            "• Или сразу: **фото + подпись** → *Верхний|Нижний*\n"
-            "• В группах: @memfy_bot + фото",
-            parse_mode='Markdown', reply_markup=reply_markup
-        )
+    # Ничего не отправляем — только молча запускаем
+    pass
 
 # === /size ===
 async def size_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,7 +200,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("Ошибка.")
         return
 
-# === ВСПОМОГАТЕЛЬНЫЕ КЛАВИАТУРЫ ===
+# === КЛАВИАТУРЫ ===
 def main_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Классический мем", callback_data="meme_classic")],
@@ -359,8 +345,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if 'classic_font' not in ud or 'classic_type' not in ud:
                 return
             top, bottom = get_top_bottom_text(update.message.text, ud['classic_type'])
-            meme = create_classic_meme_gif if ud.get('is_gif') else create_classic_meme
-            result = meme(photo_bytes, top, bottom, ud['classic_font'])
+            meme_func = create_classic_meme_gif if ud.get('is_gif') else create_classic_meme
+            result = meme_func(photo_bytes, top, bottom, ud['classic_font'])
             await send_result(update, result, ud.get('is_gif'), context)
         else:  # демотиватор
             if 'font_file' not in ud:
@@ -506,9 +492,6 @@ def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_
         font_size = {"top": 40, "bottom": 28}
     color_map = {"red": (255,0,0), "white": (255,255,255), "blue": (0,0,255), "green": (0,255,0), "purple": (128,0,128)}
     text_color = color_map.get(font_color, (255,255,255))
-    is_black_bg = True
-    border_color = (255,255,255) if is_black_bg else (100,100,100)
-    wm_color = (255,255,255,180) if is_black_bg else (50,50,50,180)
 
     img = Image.open(photo_bytes).convert('RGB')
     img = img.resize((512, 512), Image.LANCZOS)
@@ -523,7 +506,7 @@ def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_
 
     # Рамка
     for i in range(border_thickness):
-        draw.rectangle([pad-i-1, pad+top_space-i-1, pad+w+i, pad+h+top_space+i], outline=border_color)
+        draw.rectangle([pad-i-1, pad+top_space-i-1, pad+w+i, pad+h+top_space+i], outline=(255,255,255))
 
     # Шрифты
     font_large = load_font(font_file, font_size["top"])
@@ -545,7 +528,6 @@ def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_
     if bottom_text:
         draw_text(bottom_text, font_small, pad + h + top_space + border_thickness + 30)
 
-    # Водяной знак
     canvas = _add_watermark(canvas)
     out = io.BytesIO()
     canvas.save(out, 'JPEG', quality=95)
@@ -572,19 +554,46 @@ def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.Byte
     final_out.seek(0)
     return final_out
 
+# === ПАСХАЛКА /dance ===
+DANCE_GIF_PATH = os.path.join(os.path.dirname(__file__), "funny-dance.gif")
+dance_gif_bytes = None
+if os.path.exists(DANCE_GIF_PATH):
+    with open(DANCE_GIF_PATH, 'rb') as f:
+        dance_gif_bytes = f.read()
+    logger.info("Пасхалка /dance загружена: funny-dance.gif")
+else:
+    logger.warning("Пасхалка: funny-dance.gif не найден!")
+
+async def dance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if dance_gif_bytes:
+        await update.message.reply_animation(
+            animation=dance_gif_bytes,
+            caption="Танцуем!"
+        )
+    else:
+        await update.message.reply_text("Танец не найден...")
+
 # === ЗАПУСК ===
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         print("Ошибка: Установите TELEGRAM_BOT_TOKEN")
         return
+
     check_fonts_presence()
+
     app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", start))
+
+    # Команды
+    app.add_handler(CommandHandler("start", start))           # ← молча
     app.add_handler(CommandHandler("size", size_command))
+    app.add_handler(CommandHandler("dance", dance_command))   # ← ПАСХАЛКА
+
+    # Остальное
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.PHOTO | filters.ANIMATION, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
     print("Бот запущен...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
