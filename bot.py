@@ -23,7 +23,7 @@ user_messages = {}
 # === ДОНАТ ===
 DONATION_URL = "https://dalink.to/ev1lbr1tan"
 
-# === СПИСОК ШРИФТОВ (должны быть рядом с bot.py) ===
+# === СПИСОК ШРИФТОВ ===
 AVAILABLE_FONT_FILES = [
     "Molodost.ttf", "Roboto_Bold.ttf", "Times New Roman Bold Italic.ttf",
     "Nougat Regular.ttf", "Maratype Regular.ttf", "Farabee Bold.ttf",
@@ -41,7 +41,7 @@ def check_fonts_presence():
         else:
             logger.warning(f"Шрифт НЕ найден: {fname}")
 
-# === ДОНАТ КНОПКА (только в мемах) ===
+# === ДОНАТ КНОПКА ===
 def get_donation_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("Донат", url=DONATION_URL)]])
 
@@ -56,7 +56,7 @@ async def safe_reply(message, text: str, **kwargs):
 
 # === /start (молчит) ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pass  # Ничего не отправляем
+    pass
 
 # === /size ===
 async def size_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -182,14 +182,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await size_command_from_callback(query)
         return
 
-    # === ШАКАЛИЗАЦИЯ (ИСПРАВЛЕНА) ===
+    # === ШАКАЛИЗАЦИЯ ===
     if query.data.startswith("shakalize_"):
         level = query.data.split('_')[-1]
         if level not in ["light", "medium", "hard"]:
             return
         try:
             photo = user_data[user_id]['photo']
-            photo.seek(0)  # ← КРИТИЧНО!
+            photo.seek(0)
             result = shakalize_image(photo, intensity=level)
             await query.message.reply_photo(
                 photo=result,
@@ -291,7 +291,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_type = update.message.chat.type
 
-    # GIF или фото
     if update.message.animation:
         file = await context.bot.get_file(update.message.animation.file_id)
         is_gif = True
@@ -307,7 +306,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption = (update.message.caption or "").strip()
     bot_username = context.bot.username.lower()
 
-    # Группа: проверка упоминания
     if chat_type in ['group', 'supergroup']:
         mentioned = False
         if caption and f"@memfy_bot" in caption.lower():
@@ -351,7 +349,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             meme_func = create_classic_meme_gif if ud.get('is_gif') else create_classic_meme
             result = meme_func(photo_bytes, top, bottom, ud['classic_font'])
             await send_result(update, result, ud.get('is_gif'), context)
-        else:  # демотиватор
+        else:
             if 'font_file' not in ud:
                 return
             top, bottom = get_top_bottom_text(update.message.text, ud.get('demotivator_type', 'type_normal'))
@@ -488,7 +486,7 @@ def load_font(file, size):
             continue
     return ImageFont.load_default()
 
-# === ДЕМОТИВАТОР ===
+# === ДЕМОТИВАТОР (ИСПРАВЛЕНО: Cry1.25 → 1.25) ===
 def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_file="Roboto_Bold.ttf",
                        demotivator_type="type_normal", font_color="white", border_thickness=10):
     if font_size is None:
@@ -507,15 +505,12 @@ def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_
     canvas.paste(img, (pad, pad + top_space))
     draw = ImageDraw.Draw(canvas)
 
-    # Рамка
     for i in range(border_thickness):
         draw.rectangle([pad-i-1, pad+top_space-i-1, pad+w+i, pad+h+top_space+i], outline=(255,255,255))
 
-    # Шрифты
     font_large = load_font(font_file, font_size["top"])
     font_small = load_font(font_file, font_size["bottom"])
 
-    # Текст
     def draw_text(text, font, y_start):
         if not text: return y_start
         lines = _wrap_text(text, font, canvas_w - 100, draw)
@@ -523,7 +518,7 @@ def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_
         for line in lines:
             tw = draw.textbbox((0,0), line, font=font)[2]
             draw.text(((canvas_w - tw) // 2, y), line, fill=text_color, font=font)
-            y += int(font.size * 1.25)
+            y += int(font.size * 1.25)  # ← ИСПРАВЛЕНО!
         return y
 
     if demotivator_type == "type_normal" and top_text:
@@ -537,7 +532,7 @@ def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_
     out.seek(0)
     return out
 
-# === ШАКАЛИЗАЦИЯ (ИСПРАВЛЕНА) ===
+# === ШАКАЛИЗАЦИЯ ===
 def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.BytesIO:
     photo_bytes.seek(0)
     try:
@@ -571,7 +566,7 @@ def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.Byte
     out.seek(0)
     return out
 
-# === ПАСХАЛКА /dance (ИСПРАВЛЕНА — filename="dance.gif") ===
+# === ПАСХАЛКА /dance ===
 DANCE_GIF_PATH = os.path.join(os.path.dirname(__file__), "funny-dance.gif")
 dance_gif_bytes = None
 if os.path.exists(DANCE_GIF_PATH):
@@ -585,7 +580,7 @@ async def dance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if dance_gif_bytes:
         await update.message.reply_animation(
             animation=dance_gif_bytes,
-            filename="dance.gif",  # ← КРИТИЧНО! Telegram поймёт, что это GIF
+            filename="dance.gif",
             caption="Танцуем!"
         )
     else:
@@ -602,12 +597,9 @@ def main():
 
     app = Application.builder().token(token).build()
 
-    # Команды
-    app.add_handler(CommandHandler("start", start))           # ← молчит
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("size", size_command))
-    app.add_handler(CommandHandler("dance", dance_command))   # ← пасхалка
-
-    # Остальное
+    app.add_handler(CommandHandler("dance", dance_command))
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.PHOTO | filters.ANIMATION, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
