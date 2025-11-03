@@ -13,17 +13,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# === ПАПКА СО ШРИФТАМИ И ГИФКОЙ ===
-FONT_DIR = os.path.dirname(__file__)  # ← всё в одной папке с bot.py
+# === ПАПКА СО ВСЕМИ ФАЙЛАМИ ===
+FONT_DIR = os.path.dirname(__file__)  # ← шрифты и гифка рядом с bot.py
 
 # === ХРАНИЛИЩЕ ===
 user_data = {}
 user_messages = {}
 
-# === ДОНАТ (только в мемах) ===
+# === ДОНАТ ===
 DONATION_URL = "https://dalink.to/ev1lbr1tan"
 
-# === СПИСОК ШРИФТОВ ===
+# === СПИСОК ШРИФТОВ (должны быть рядом с bot.py) ===
 AVAILABLE_FONT_FILES = [
     "Molodost.ttf", "Roboto_Bold.ttf", "Times New Roman Bold Italic.ttf",
     "Nougat Regular.ttf", "Maratype Regular.ttf", "Farabee Bold.ttf",
@@ -41,7 +41,7 @@ def check_fonts_presence():
         else:
             logger.warning(f"Шрифт НЕ найден: {fname}")
 
-# === ДОНАТ КНОПКА (только для мемов) ===
+# === ДОНАТ КНОПКА (только в мемах) ===
 def get_donation_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton("Донат", url=DONATION_URL)]])
 
@@ -54,10 +54,9 @@ async def safe_reply(message, text: str, **kwargs):
         logger.warning(f"Markdown failed: {e}")
         return await message.reply_text(clean, **kwargs)
 
-# === /start (без текста и кнопки) ===
+# === /start (молчит) ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Ничего не отправляем — только молча запускаем
-    pass
+    pass  # Ничего не отправляем
 
 # === /size ===
 async def size_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -183,21 +182,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await size_command_from_callback(query)
         return
 
-    # === ШАКАЛИЗАЦИЯ ===
+    # === ШАКАЛИЗАЦИЯ (ИСПРАВЛЕНА) ===
     if query.data.startswith("shakalize_"):
         level = query.data.split('_')[-1]
         if level not in ["light", "medium", "hard"]:
             return
         try:
             photo = user_data[user_id]['photo']
-            photo.seek(0)
+            photo.seek(0)  # ← КРИТИЧНО!
             result = shakalize_image(photo, intensity=level)
-            await query.message.reply_photo(photo=result, caption="Зашакалил!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+            await query.message.reply_photo(
+                photo=result,
+                caption="Зашакалил!\n\n@memfy_bot",
+                reply_markup=get_donation_keyboard()
+            )
             await clear_user_messages(context, query, user_id)
             user_data[user_id].clear()
         except Exception as e:
             logger.error(f"Шакализация: {e}")
-            await query.edit_message_text("Ошибка.")
+            await query.edit_message_text("Ошибка при шакализации.")
         return
 
 # === КЛАВИАТУРЫ ===
@@ -534,27 +537,41 @@ def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_
     out.seek(0)
     return out
 
-# === ШАКАЛИЗАЦИЯ ===
+# === ШАКАЛИЗАЦИЯ (ИСПРАВЛЕНА) ===
 def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.BytesIO:
-    levels = {'light': (0.6, 5, 35), 'medium': (0.35, 4, 20), 'hard': (0.14, 3, 8)}
-    down, bits, qual = levels.get(intensity, levels['hard'])
-    im = Image.open(photo_bytes).convert('RGB')
-    w, h = im.size
-    small = im.resize((max(2, int(w*down)), max(2, int(h*down))), Image.NEAREST)
-    pixel = small.resize((w, h), Image.NEAREST)
-    poster = ImageOps.posterize(pixel, bits)
-    blur = poster.filter(ImageFilter.GaussianBlur(1))
-    final = ImageOps.autocontrast(blur)
-    out = io.BytesIO()
-    final.save(out, 'JPEG', quality=qual)
-    out.seek(0)
-    final = Image.open(out).convert('P', palette=Image.ADAPTIVE, colors=64).convert('RGB')
-    final_out = io.BytesIO()
-    final.save(final_out, 'JPEG', quality=max(2, qual))
-    final_out.seek(0)
-    return final_out
+    photo_bytes.seek(0)
+    try:
+        im = Image.open(photo_bytes).convert('RGB')
+    except Exception as e:
+        logger.error(f"Ошибка открытия изображения: {e}")
+        raise
 
-# === ПАСХАЛКА /dance ===
+    max_size = 800
+    if im.width > max_size or im.height > max_size:
+        im.thumbnail((max_size, max_size), Image.LANCZOS)
+
+    w, h = im.size
+    levels = {
+        'light':  (0.6,  6, 40),
+        'medium': (0.35, 5, 25),
+        'hard':   (0.14, 4, 10),
+    }
+    scale, bits, quality = levels.get(intensity, levels['hard'])
+
+    new_w = max(4, int(w * scale))
+    new_h = max(4, int(h * scale))
+    im_small = im.resize((new_w, new_h), Image.NEAREST)
+    im_pixel = im_small.resize((w, h), Image.NEAREST)
+    im_poster = ImageOps.posterize(im_pixel, bits)
+    im_blur = im_poster.filter(ImageFilter.GaussianBlur(radius=0.5))
+    im_final = ImageOps.autocontrast(im_blur, cutoff=2)
+
+    out = io.BytesIO()
+    im_final.save(out, format='JPEG', quality=quality, optimize=True)
+    out.seek(0)
+    return out
+
+# === ПАСХАЛКА /dance (ИСПРАВЛЕНА — filename="dance.gif") ===
 DANCE_GIF_PATH = os.path.join(os.path.dirname(__file__), "funny-dance.gif")
 dance_gif_bytes = None
 if os.path.exists(DANCE_GIF_PATH):
@@ -568,6 +585,7 @@ async def dance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if dance_gif_bytes:
         await update.message.reply_animation(
             animation=dance_gif_bytes,
+            filename="dance.gif",  # ← КРИТИЧНО! Telegram поймёт, что это GIF
             caption="Танцуем!"
         )
     else:
@@ -585,9 +603,9 @@ def main():
     app = Application.builder().token(token).build()
 
     # Команды
-    app.add_handler(CommandHandler("start", start))           # ← молча
+    app.add_handler(CommandHandler("start", start))           # ← молчит
     app.add_handler(CommandHandler("size", size_command))
-    app.add_handler(CommandHandler("dance", dance_command))   # ← ПАСХАЛКА
+    app.add_handler(CommandHandler("dance", dance_command))   # ← пасхалка
 
     # Остальное
     app.add_handler(CallbackQueryHandler(button_callback))
