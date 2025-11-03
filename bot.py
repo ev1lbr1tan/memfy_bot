@@ -14,14 +14,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # === ПАПКА СО ВСЕМИ ФАЙЛАМИ ===
-FONT_DIR = os.path.dirname(__file__)  # ← шрифты и гифка рядом с bot.py
+FONT_DIR = os.path.dirname(__file__)
 
 # === ХРАНИЛИЩЕ ===
 user_data = {}
 user_messages = {}
-
-# === ДОНАТ ===
-DONATION_URL = "https://dalink.to/ev1lbr1tan"
 
 # === СПИСОК ШРИФТОВ ===
 AVAILABLE_FONT_FILES = [
@@ -40,10 +37,6 @@ def check_fonts_presence():
             logger.info(f"Шрифт найден: {fname}")
         else:
             logger.warning(f"Шрифт НЕ найден: {fname}")
-
-# === ДОНАТ КНОПКА ===
-def get_donation_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("Донат", url=DONATION_URL)]])
 
 # === БЕЗОПАСНАЯ ОТПРАВКА ===
 async def safe_reply(message, text: str, **kwargs):
@@ -182,7 +175,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await size_command_from_callback(query)
         return
 
-    # === ШАКАЛИЗАЦИЯ ===
+    # === ШАКАЛИЗАЦИЯ (СТАРЫЙ ФУНКЦИОНАЛ) ===
     if query.data.startswith("shakalize_"):
         level = query.data.split('_')[-1]
         if level not in ["light", "medium", "hard"]:
@@ -193,8 +186,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result = shakalize_image(photo, intensity=level)
             await query.message.reply_photo(
                 photo=result,
-                caption="Зашакалил!\n\n@memfy_bot",
-                reply_markup=get_donation_keyboard()
+                caption="Зашакалил!\n\n@memfy_bot"
             )
             await clear_user_messages(context, query, user_id)
             user_data[user_id].clear()
@@ -380,9 +372,9 @@ def get_top_bottom_text(text: str, meme_type: str):
 
 async def send_result(update, result_bytes, is_gif, context):
     if is_gif:
-        await update.message.reply_animation(animation=result_bytes, caption="Готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+        await update.message.reply_animation(animation=result_bytes, caption="Готово!\n\n@memfy_bot")
     else:
-        await update.message.reply_photo(photo=result_bytes, caption="Готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+        await update.message.reply_photo(photo=result_bytes, caption="Готово!\n\n@memfy_bot")
 
 # === МЕМЫ ===
 def create_classic_meme(photo_bytes: io.BytesIO, top_text: str, bottom_text: str, font_file: str = "Impact.ttf") -> io.BytesIO:
@@ -486,7 +478,7 @@ def load_font(file, size):
             continue
     return ImageFont.load_default()
 
-# === ДЕМОТИВАТОР (ИСПРАВЛЕНО: Cry1.25 → 1.25) ===
+# === ДЕМОТИВАТОР ===
 def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_file="Roboto_Bold.ttf",
                        demotivator_type="type_normal", font_color="white", border_thickness=10):
     if font_size is None:
@@ -518,7 +510,7 @@ def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_
         for line in lines:
             tw = draw.textbbox((0,0), line, font=font)[2]
             draw.text(((canvas_w - tw) // 2, y), line, fill=text_color, font=font)
-            y += int(font.size * 1.25)  # ← ИСПРАВЛЕНО!
+            y += int(font.size * 1.25)
         return y
 
     if demotivator_type == "type_normal" and top_text:
@@ -532,39 +524,26 @@ def create_demotivator(photo_bytes, top_text, bottom_text, font_size=None, font_
     out.seek(0)
     return out
 
-# === ШАКАЛИЗАЦИЯ ===
+# === ШАКАЛИЗАЦИЯ (СТАРЫЙ ВАРИАНТ) ===
 def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.BytesIO:
     photo_bytes.seek(0)
-    try:
-        im = Image.open(photo_bytes).convert('RGB')
-    except Exception as e:
-        logger.error(f"Ошибка открытия изображения: {e}")
-        raise
-
-    max_size = 800
-    if im.width > max_size or im.height > max_size:
-        im.thumbnail((max_size, max_size), Image.LANCZOS)
-
+    im = Image.open(photo_bytes).convert('RGB')
     w, h = im.size
-    levels = {
-        'light':  (0.6,  6, 40),
-        'medium': (0.35, 5, 25),
-        'hard':   (0.14, 4, 10),
-    }
-    scale, bits, quality = levels.get(intensity, levels['hard'])
-
-    new_w = max(4, int(w * scale))
-    new_h = max(4, int(h * scale))
-    im_small = im.resize((new_w, new_h), Image.NEAREST)
-    im_pixel = im_small.resize((w, h), Image.NEAREST)
-    im_poster = ImageOps.posterize(im_pixel, bits)
-    im_blur = im_poster.filter(ImageFilter.GaussianBlur(radius=0.5))
-    im_final = ImageOps.autocontrast(im_blur, cutoff=2)
-
+    levels = {'light': (0.6, 5, 35), 'medium': (0.35, 4, 20), 'hard': (0.14, 3, 8)}
+    down, bits, qual = levels.get(intensity, levels['hard'])
+    small = im.resize((max(2, int(w*down)), max(2, int(h*down))), Image.NEAREST)
+    pixel = small.resize((w, h), Image.NEAREST)
+    poster = ImageOps.posterize(pixel, bits)
+    blur = poster.filter(ImageFilter.GaussianBlur(1))
+    final = ImageOps.autocontrast(blur)
     out = io.BytesIO()
-    im_final.save(out, format='JPEG', quality=quality, optimize=True)
+    final.save(out, 'JPEG', quality=qual)
     out.seek(0)
-    return out
+    final = Image.open(out).convert('P', palette=Image.ADAPTIVE, colors=64).convert('RGB')
+    final_out = io.BytesIO()
+    final.save(final_out, 'JPEG', quality=max(2, qual))
+    final_out.seek(0)
+    return final_out
 
 # === ПАСХАЛКА /dance ===
 DANCE_GIF_PATH = os.path.join(os.path.dirname(__file__), "funny-dance.gif")
@@ -604,7 +583,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO | filters.ANIMATION, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    print("Бот запущен...")
+    print("Бот запущен!")  # ← СТАРТОВОЕ СООБЩЕНИЕ
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
