@@ -1,8 +1,8 @@
 ﻿import logging
 import random
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, PreCheckoutQueryHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 import io
 
@@ -24,21 +24,6 @@ user_messages = {}
 
 # Ссылка на DonationAlerts
 DONATION_URL = "https://dalink.to/ev1lbr1tan"
-
-# Список шрифтов, которые бот умеет использовать (имена файлов)
-AVAILABLE_FONT_FILES = [
-    "Molodost.ttf",
-    "Roboto_Bold.ttf",
-    "Times New Roman Bold Italic.ttf",
-    "Nougat Regular.ttf",
-    "Maratype Regular.ttf",
-    "Farabee Bold.ttf",
-    "Impact.ttf",
-    "Anton-Regular.ttf",            # загружённый пользователем
-    "Comic Sans MS.ttf",            # загружённый пользователем
-    "Arial_black.ttf",              # загружённый пользователем
-    "Lobster.ttf",
-]
 
 
 def check_fonts_presence():
@@ -64,11 +49,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
     chat_type = update.message.chat.type if update.message else 'private'
     
+    keyboard = [
+        [InlineKeyboardButton("Поддержать бота 💰", url=DONATION_URL)],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
     if chat_type in ['group', 'supergroup']:
-        keyboard = [
-            [InlineKeyboardButton("Поддержать бота 💰", callback_data="support_bot")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
             "Привет! Я бот для создания мемов и демотиваторов.\n\n"
             "Чтобы создать мем в группе:\n"
@@ -79,10 +65,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
     else:
-        keyboard = [
-            [InlineKeyboardButton("Поддержать бота 💰", callback_data="support_bot")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
             "Привет! Я бот для создания мемов и демотиваторов.\n\n"
             "Как пользоваться:\n"
@@ -102,33 +84,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Бот работает в личных сообщениях и в группах!",
             reply_markup=reply_markup
         )
-
-async def send_support_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отправка инвойса для поддержки бота через Telegram Stars"""
-    query = update.callback_query
-    await query.answer()
-
-    await context.bot.send_invoice(
-        chat_id=query.message.chat_id,
-        title="Поддержать бота Memfy",
-        description="Твоя поддержка помогает развивать бота: новые шрифты, фичи и мемы! 🌟",
-        payload="support_donation_001",  # Уникальный payload для валидации
-        provider_token="",  # Пустой для Telegram Stars
-        currency="XTR",  # Telegram Stars
-        prices=[LabeledPrice("Поддержка 💖", 100)],  # 100 Stars (~$1)
-        start_parameter="support-memfy",
-        need_name=False,
-        need_phone_number=False,
-        need_email=False,
-        need_shipping_address=False,
-        is_flexible=False
-    )
-
-    # Удаляем сообщение с кнопкой после отправки инвойса
-    try:
-        await query.message.delete()
-    except:
-        pass
 
 
 async def size_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -159,10 +114,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     user_id = query.from_user.id
-
-    if query.data == "support_bot":
-        await send_support_invoice(update, context)
-        return
 
     if user_id not in user_data:
         user_data[user_id] = {}
@@ -725,7 +676,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Зашакалить 🛠️", callback_data="shakalize_menu"),
         ],
         [
-            InlineKeyboardButton("Поддержать бота 💰", callback_data="support_bot"),
+            InlineKeyboardButton("Поддержать бота 💰", url=DONATION_URL),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -861,27 +812,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Произошла ошибка при создании мема. Попробуй еще раз.")
 
 
-async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик pre-checkout для подтверждения платежа"""
-    query = update.pre_checkout_query
-    if query.invoice_payload != "support_donation_001":
-        await query.answer(ok=False, error_message="Неверный заказ! Попробуйте снова.")
-    else:
-        await query.answer(ok=True)
-
-
-async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик успешного платежа"""
-    payment = update.message.successful_payment
-    if payment.currency == "XTR" and payment.total_amount == 100:
-        await update.message.reply_text(
-            "Спасибо за поддержку! 🌟 Твоя помощь помогает боту становиться лучше.\n"
-            "Вот специальный мем в благодарность:\n\n"
-            "[Здесь можно добавить генерацию бесплатного премиум-мема, но для простоты - текст]",
-            reply_markup=get_donation_keyboard()
-        )
-    else:
-        await update.message.reply_text("Платёж получен, спасибо! 🚀", reply_markup=get_donation_keyboard())
+# Список шрифтов, которые бот умеет использовать (имена файлов)
+AVAILABLE_FONT_FILES = [
+    "Molodost.ttf",
+    "Roboto_Bold.ttf",
+    "Times New Roman Bold Italic.ttf",
+    "Nougat Regular.ttf",
+    "Maratype Regular.ttf",
+    "Farabee Bold.ttf",
+    "Impact.ttf",
+    "Anton-Regular.ttf",            # загружённый пользователем
+    "Comic Sans MS.ttf",            # загружённый пользователем
+    "Arial_black.ttf",              # загружённый пользователем
+    "Lobster.ttf",
+]
 
 
 def create_classic_meme(photo_bytes: io.BytesIO, top_text: str, bottom_text: str, font_file: str = "Impact.ttf") -> io.BytesIO:
@@ -1347,8 +1291,6 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("size", size_command))
     application.add_handler(CallbackQueryHandler(button_callback))
-    application.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
     application.add_handler(MessageHandler(filters.PHOTO | filters.ANIMATION, handle_photo))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     print("Бот запущен...")
