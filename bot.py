@@ -406,6 +406,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await context.bot.get_file(update.message.animation.file_id)
         is_gif = True
         media_type = 'gif'
+    elif update.message.document and update.message.document.mime_type in ['image/gif', 'video/mp4']:
+        # Обработка GIF как документа
+        file = await context.bot.get_file(update.message.document.file_id)
+        is_gif = True
+        media_type = 'gif'
     else:
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
@@ -413,11 +418,23 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         media_type = 'photo'
 
     photo_bytes = io.BytesIO()
-    await file.download_to_memory(photo_bytes)
+    file_size = file.file_size
+    if file_size > 50 * 1024 * 1024:
+        # Для больших файлов используем download_to_drive
+        temp_path = f"temp_{uuid.uuid4()}.tmp"
+        try:
+            await file.download_to_drive(temp_path)
+            with open(temp_path, 'rb') as f:
+                photo_bytes.write(f.read())
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    else:
+        await file.download_to_memory(photo_bytes)
     photo_bytes.seek(0)
 
     # Проверка размера (только для фото, GIF без лимита)
-    if not is_gif and len(photo_bytes.getvalue()) > 50 * 1024 * 1024:
+    if not is_gif and photo_bytes.tell() > 50 * 1024 * 1024:
         await update.message.reply_text("Файл слишком большой (макс 50MB).")
         return
 
