@@ -467,6 +467,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Ошибка GIF: {e}")
             await update.message.reply_text("Ошибка обработки GIF. Проверьте формат файла.")
+            return
 
     if user_id not in user_messages:
         user_messages[user_id] = []
@@ -545,7 +546,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in user_data or 'photo' not in user_data[user_id]:
         if update.message.chat.type == 'private':
-            await update.message.reply_text("Сначала отправь фото.")
+            await update.message.reply_text("Сначала отправь фото или GIF.")
         return
 
     meme_type = user_data[user_id].get('meme_type')
