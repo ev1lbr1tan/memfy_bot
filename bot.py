@@ -423,10 +423,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Проверка формата файла
     try:
-        if is_gif:
-            Image.open(photo_bytes).verify()
-        else:
-            Image.open(photo_bytes).verify()
+        test_img = Image.open(photo_bytes)
+        test_img.verify()
         photo_bytes.seek(0)
     except Exception as e:
         logger.error(f"Неверный формат файла: {e}")
