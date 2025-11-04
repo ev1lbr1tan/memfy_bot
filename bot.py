@@ -625,7 +625,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Ошибка обработки: {e}")
-        await update.message.reply_text("Ошибка обработки файла. Проверьте формат и размер файла.")
+        await update.message.reply_text("Ошибка обработки файла. Проверьте формат файла.")
 
 
 # === КЛАССИЧЕСКИЙ МЕМ ===
@@ -848,10 +848,12 @@ def add_text_to_gif(gif_bytes: io.BytesIO, text: str, options: dict = None) -> i
     durations = []
 
     try:
-        while True:
+        frame_count = 0
+        while frame_count < 100:
             frame = gif.convert('RGBA')
             frames.append(frame)
             durations.append(gif.info.get('duration', 100))
+            frame_count += 1
             gif.seek(gif.tell() + 1)
     except EOFError:
         pass
@@ -869,10 +871,9 @@ def add_text_to_gif(gif_bytes: io.BytesIO, text: str, options: dict = None) -> i
                 logger.warning(f"Не удалось загрузить шрифт {path}: {e}")
     font = font_cache[font_key]
 
-    # Обработка кадров (ограничить до 100 кадров для производительности)
+    # Обработка кадров
     processed_frames = []
-    max_frames = min(len(frames), 100)
-    for i in range(max_frames):
+    for i in range(len(frames)):
         frame = frames[i]
         draw = ImageDraw.Draw(frame)
         w, h = frame.size
