@@ -5,24 +5,33 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 import io
+try:
+    import moviepy.editor as mp
+    import cv2
+    import numpy as np
+    VIDEO_SUPPORT = True
+except ImportError:
+    VIDEO_SUPPORT = False
+    logging.warning("MoviePy, OpenCV или NumPy не установлены. Видео-функции отключены.")
 
-# Настройка логирования
+# === ЛОГИРОВАНИЕ ===
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Фиксированная папка для шрифтов
-FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+# === ШРИФТЫ В ТОЙ ЖЕ ПАПКЕ, ЧТО И bot.py ===
+FONT_DIR = os.path.dirname(__file__)  # ← шрифты рядом с bot.py
 
-# Хранилище для временных данных пользователей
+# === ХРАНИЛИЩЕ ===
 user_data = {}
-
-# Хранилище для ID сообщений, которые нужно удалить
 user_messages = {}
 
-# Список шрифтов, которые бот умеет использовать (имена файлов)
+# === ДОНАТ ===
+DONATION_URL = "https://dalink.to/ev1lbr1tan"
+
+# === СПИСОК ШРИФТОВ (должны быть в той же папке) ===
 AVAILABLE_FONT_FILES = [
     "Molodost.ttf",
     "Roboto_Bold.ttf",
@@ -39,62 +48,76 @@ AVAILABLE_FONT_FILES = [
 
 
 def check_fonts_presence():
-    """Логируем наличие известных шрифтов в ./fonts"""
-    logger.info(f"Проверка наличия шрифтов в {FONT_DIR}...")
+    """Проверка наличия шрифтов в папке с bot.py"""
+    logger.info(f"Проверка шрифтов в: {FONT_DIR}")
     for fname in AVAILABLE_FONT_FILES:
         path = os.path.join(FONT_DIR, fname)
         if os.path.exists(path):
-            logger.info(f"Шрифт найден: {fname} ({path})")
+            logger.info(f"Шрифт найден: {fname}")
         else:
-            logger.warning(f"Шрифт НЕ найден: {fname} (ищется по {path})")
+            logger.warning(f"Шрифт НЕ найден: {fname} (ищется: {path})")
 
 
+def get_donation_keyboard():
+    """Кнопка 'Донат'"""
+    keyboard = [[InlineKeyboardButton("Донат", url=DONATION_URL)]]
+    return InlineKeyboardMarkup(keyboard)
+
+
+# === /start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
     chat_type = update.message.chat.type if update.message else 'private'
-    
+    reply_markup = get_donation_keyboard()
+
     if chat_type in ['group', 'supergroup']:
         await update.message.reply_text(
-            "Бот запущен!:)"
+            "Прикрепи фото, и посмотри что получиться!:)\n\n"
+            "В группе:\n"
+            "1. Отправь фото с подписью: @memfy_bot\n"
+            "2. Выбери тип\n"
+            "3. Отправь текст: 'Верхний|Нижний'",
+            reply_markup=reply_markup
         )
     else:
         await update.message.reply_text(
-            "Бот запущен!:)"
+            "Прикрепи фото, и посмотри что получиться!:)\n\n"
+            "Как пользоваться:\n"
+            "1. Отправь фото\n"
+            "2. Выбери тип: мем или демотиватор\n"
+            "3. Настрой шрифт, размер, цвет, фон, рамку\n"
+            "4. Отправь текст: 'Верхний|Нижний'\n\n"
+            "Или просто фото + подпись с текстом.\n"
+            "Работает в личке и группах!",
+            reply_markup=reply_markup
         )
 
 
+# === /size (для демотиваторов) ===
 async def size_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [
-            InlineKeyboardButton("Маленький", callback_data="size_small"),
-            InlineKeyboardButton("Средний", callback_data="size_medium"),
-        ],
-        [
-            InlineKeyboardButton("Большой", callback_data="size_large"),
-            InlineKeyboardButton("Очень большой", callback_data="size_xlarge"),
-        ],
-        [
-            InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-            InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-        ],
+        [InlineKeyboardButton("Маленький", callback_data="size_small"),
+         InlineKeyboardButton("Средний", callback_data="size doubtless")],
+        [InlineKeyboardButton("Большой", callback_data="size_large"),
+         InlineKeyboardButton("Очень большой", callback_data="size_xlarge")],
+        [InlineKeyboardButton("Назад", callback_data="action_back"),
+         InlineKeyboardButton("Отмена", callback_data="action_cancel")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await update.message.reply_text(
-        "Выбери размер шрифта для демотиватора:",
-        reply_markup=reply_markup
+        "Выбери размер шрифта:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
+# === КНОПКИ ===
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     user_id = query.from_user.id
 
     if user_id not in user_data:
         user_data[user_id] = {}
 
+    # === ОТМЕНА ===
     if query.data == "action_cancel":
         if user_id in user_messages:
             for msg_id in list(user_messages[user_id]):
@@ -104,512 +127,249 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
             user_messages[user_id] = []
         user_data[user_id] = {}
-        await query.edit_message_text("❌ Генерация отменена. Можешь отправить новое фото чтобы начать заново.")
+        await query.edit_message_text("Генерация отменена. Прикрепи новое фото! :)")
         return
 
+    # === НАЗАД ===
     if query.data == "action_back":
         ud = user_data.get(user_id, {})
         if 'font_file' in ud and ud.get('meme_type') == 'meme_demotivator':
             ud.pop('font_file', None)
-            reply_markup = show_font_selection(user_id)
-            await query.edit_message_text("⬅️ Возврат: выбери шрифт:", reply_markup=reply_markup)
+            await query.edit_message_text("Выбери шрифт:", reply_markup=show_font_selection(user_id))
             return
-        if 'font_size' in ud and ud.get('demotivator_type'):
+        if 'font_size' in ud:
             ud.pop('font_size', None)
             keyboard = [
-                [
-                    InlineKeyboardButton("Маленький", callback_data="size_small"),
-                    InlineKeyboardButton("Средний", callback_data="size_medium"),
-                ],
-                [
-                    InlineKeyboardButton("Большой", callback_data="size_large"),
-                    InlineKeyboardButton("Очень большой", callback_data="size_xlarge"),
-                ],
-                [
-                    InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-                    InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-                ],
+                [InlineKeyboardButton("Маленький", callback_data="size_small"),
+                 InlineKeyboardButton("Средний", callback_data="size_medium")],
+                [InlineKeyboardButton("Большой", callback_data="size_large"),
+                 InlineKeyboardButton("Очень большой", callback_data="size_xlarge")],
+                [InlineKeyboardButton("Назад", callback_data="action_back"),
+                 InlineKeyboardButton("Отмена", callback_data="action_cancel")],
             ]
-            await query.edit_message_text("⬅️ Возврат: выбери размер шрифта:", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text("Выбери размер:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         if 'demotivator_type' in ud:
             ud.pop('demotivator_type', None)
-            reply_markup = show_font_selection(user_id)
-            await query.edit_message_text("⬅️ Возврат: выбери шрифт для демотиватора:", reply_markup=reply_markup)
+            await query.edit_message_text("Выбери шрифт:", reply_markup=show_font_selection(user_id))
             return
         if 'meme_type' in ud:
             ud.pop('meme_type', None)
             keyboard = [
-                [
-                    InlineKeyboardButton("Классический мем", callback_data="meme_classic"),
-                ],
-                [
-                    InlineKeyboardButton("Демотиватор", callback_data="meme_demotivator"),
-                ],
-                [
-                    InlineKeyboardButton("Зашакалить", callback_data="shakalize_menu"),
-                ],
-                [
-                    InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-                ]
+                [InlineKeyboardButton("Классический мем", callback_data="meme_classic")],
+                [InlineKeyboardButton("Демотиватор", callback_data="meme_demotivator")],
+                [InlineKeyboardButton("Зашакалить", callback_data="shakalize_menu")],
+                [InlineKeyboardButton("Отмена", callback_data="action_cancel")],
             ]
-            await query.edit_message_text("⬅️ Возврат: выбери тип мема:", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text("Выбери тип:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
-        await query.edit_message_text("Нечего возвращать — отправь новое фото или выбери действие.", reply_markup=None)
+        await query.edit_message_text("Нечего возвращать.")
         return
 
+    # === РАЗМЕР ШРИФТА ===
     size_map = {
         "size_small": {"top": 30, "bottom": 20},
         "size_medium": {"top": 40, "bottom": 28},
         "size_large": {"top": 50, "bottom": 35},
         "size_xlarge": {"top": 60, "bottom": 40},
     }
-    
     if query.data in size_map:
         user_data[user_id]['font_size'] = size_map[query.data]
-        
-        size_names = {
-            "size_small": "Маленький",
-            "size_medium": "Средний",
-            "size_large": "Большой",
-            "size_xlarge": "Очень большой",
-        }
-        
+        size_names = {"size_small": "Маленький", "size_medium": "Средний", "size_large": "Большой", "size_xlarge": "Очень большой"}
         keyboard = [
-            [
-                InlineKeyboardButton("Красный", callback_data="color_red"),
-                InlineKeyboardButton("Белый", callback_data="color_white"),
-            ],
-            [
-                InlineKeyboardButton("Жёлтый", callback_data="color_yellow"),
-                InlineKeyboardButton("Оранжевый", callback_data="color_orange"),
-            ],
-            [
-                InlineKeyboardButton("Синий", callback_data="color_blue"),
-                InlineKeyboardButton("Зелёный", callback_data="color_green"),
-            ],
-            [
-                InlineKeyboardButton("Фиолетовый", callback_data="color_purple"),
-                InlineKeyboardButton("Коричневый", callback_data="color_brown"),
-            ],
-            [
-                InlineKeyboardButton("Чёрный", callback_data="color_black"),
-                InlineKeyboardButton("Серый", callback_data="color_gray"),
-            ],
-            [
-                InlineKeyboardButton("Розовый", callback_data="color_pink"),
-                InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-            ]
+            [InlineKeyboardButton("Красный", callback_data="color_red"), InlineKeyboardButton("Белый", callback_data="color_white")],
+            [InlineKeyboardButton("Жёлтый", callback_data="color_yellow"), InlineKeyboardButton("Оранжевый", callback_data="color_orange")],
+            [InlineKeyboardButton("Синий", callback_data="color_blue"), InlineKeyboardButton("Зелёный", callback_data="color_green")],
+            [InlineKeyboardButton("Фиолетовый", callback_data="color_purple"), InlineKeyboardButton("Коричневый", callback_data="color_brown")],
+            [InlineKeyboardButton("Чёрный", callback_data="color_black"), InlineKeyboardButton("Серый", callback_data="color_gray")],
+            [InlineKeyboardButton("Розовый", callback_data="color_pink"), InlineKeyboardButton("Назад", callback_data="action_back")],
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await query.edit_message_text(
-            f"Размер шрифта установлен: **{size_names[query.data]}**\n\n"
-            "Выбери цвет шрифта:",
-            parse_mode='Markdown',
-            reply_markup=reply_markup
+            f"Размер: **{size_names[query.data]}**\n\nВыбери цвет текста:",
+            parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
-    
+
+    # === ЦВЕТ ТЕКСТА ===
     color_map = {
-        "color_red": "red",
-        "color_white": "white",
-        "color_yellow": "yellow",
-        "color_orange": "orange",
-        "color_blue": "blue",
-        "color_green": "green",
-        "color_purple": "purple",
-        "color_brown": "brown",
-        "color_black": "black",
-        "color_gray": "gray",
-        "color_pink": "pink",
+        "color_red": "red", "color_white": "white", "color_yellow": "yellow", "color_orange": "orange",
+        "color_blue": "blue", "color_green": "green", "color_purple": "purple", "color_brown": "brown",
+        "color_black": "black", "color_gray": "gray", "color_pink": "pink",
     }
-    
-    color_names = {
-        "color_red": "Красный",
-        "color_white": "Белый",
-        "color_yellow": "Жёлтый",
-        "color_orange": "Оранжевый",
-        "color_blue": "Синий",
-        "color_green": "Зелёный",
-        "color_purple": "Фиолетовый",
-        "color_brown": "Коричневый",
-        "color_black": "Чёрный",
-        "color_gray": "Серый",
-        "color_pink": "Розовый",
-    }
-    
+    color_names = {v: k.split('_')[1].capitalize() for k, v in color_map.items()}
     if query.data in color_map:
         user_data[user_id]['font_color'] = color_map[query.data]
-        
-        if user_data.get(user_id, {}).get('meme_type') == 'meme_demotivator':
+        if user_data[user_id].get('meme_type') == 'meme_demotivator':
             keyboard = [
-                [
-                    InlineKeyboardButton("Чёрный (классика)", callback_data="bg_black"),
-                    InlineKeyboardButton("Белый", callback_data="bg_white"),
-                ],
-                [
-                    InlineKeyboardButton("Тёмно-серый", callback_data="bg_dark_gray"),
-                    InlineKeyboardButton("Светло-серый", callback_data="bg_light_gray"),
-                ],
-                [
-                    InlineKeyboardButton("Синий", callback_data="bg_blue"),
-                    InlineKeyboardButton("Зелёный", callback_data="bg_green"),
-                ],
-                [
-                    InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-                ]
+                [InlineKeyboardButton("Чёрный (классика)", callback_data="bg_black"),
+                 InlineKeyboardButton("Белый", callback_data="bg_white")],
+                [InlineKeyboardButton("Тёмно-серый", callback_data="bg_dark_gray"),
+                 InlineKeyboardButton("Светло-серый", callback_data="bg_light_gray")],
+                [InlineKeyboardButton("Синий", callback_data="bg_blue"),
+                 InlineKeyboardButton("Зелёный", callback_data="bg_green")],
+                [InlineKeyboardButton("Назад", callback_data="action_back")],
             ]
             await query.edit_message_text(
-                f"Цвет шрифта установлен: **{color_names[query.data]}**\n\n"
-                "Выбери цвет фона для демотиватора:",
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                f"Цвет текста: **{color_names[color_map[query.data]]}**\n\nВыбери фон:",
+                parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard)
             )
-            return
         else:
             keyboard = [
-                [
-                    InlineKeyboardButton("Тонкая (4px)", callback_data="thickness_thin"),
-                    InlineKeyboardButton("Обычная (10px)", callback_data="thickness_normal"),
-                ],
-                [
-                    InlineKeyboardButton("Толстая (20px)", callback_data="thickness_thick"),
-                    InlineKeyboardButton("Очень толстая (30px)", callback_data="thickness_xthick"),
-                ],
-                [
-                    InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-                    InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-                ],
+                [InlineKeyboardButton("Тонкая (4px)", callback_data="thickness_thin"),
+                 InlineKeyboardButton("Обычная (10px)", callback_data="thickness_normal")],
+                [InlineKeyboardButton("Толстая (20px)", callback_data="thickness_thick"),
+                 InlineKeyboardButton("Очень толстая (30px)", callback_data="thickness_xthick")],
+                [InlineKeyboardButton("Назад", callback_data="action_back"),
+                 InlineKeyboardButton("Отмена", callback_data="action_cancel")],
             ]
             await query.edit_message_text(
-                f"Цвет шрифта установлен: **{color_names[query.data]}**\n\n"
-                "Выбери толщину обводки (рамки) для фотографии в демотиваторе:",
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                f"Цвет текста: **{color_names[color_map[query.data]]}**\n\nВыбери рамку:",
+                parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard)
             )
-            return
+        return
 
+    # === ФОН ===
     bg_map = {
-        "bg_black": (0, 0, 0),
-        "bg_white": (255, 255, 255),
-        "bg_dark_gray": (50, 50, 50),
-        "bg_light_gray": (200, 200, 200),
-        "bg_blue": (0, 0, 139),
-        "bg_green": (0, 100, 0),
+        "bg_black": (0, 0, 0), "bg_white": (255, 255, 255), "bg_dark_gray": (50, 50, 50),
+        "bg_light_gray": (200, 200, 200), "bg_blue": (0, 0, 139), "bg_green": (0, 100, 0),
     }
-
-    bg_names = {
-        "bg_black": "Чёрный (классика)",
-        "bg_white": "Белый",
-        "bg_dark_gray": "Тёмно-серый",
-        "bg_light_gray": "Светло-серый",
-        "bg_blue": "Синий",
-        "bg_green": "Зелёный",
-    }
-
+    bg_names = {k: v for k, v in zip(bg_map.keys(), ["Чёрный", "Белый", "Тёмно-серый", "Светло-серый", "Синий", "Зелёный"])}
     if query.data in bg_map:
         user_data[user_id]['bg_color'] = bg_map[query.data]
+        keyboard = [
+            [InlineKeyboardButton("Тонкая (4px)", callback_data="thickness_thin"),
+             InlineKeyboardButton("Обычная (10px)", callback_data="thickness_normal")],
+            [InlineKeyboardButton("Толстая (20px)", callback_data="thickness_thick"),
+             InlineKeyboardButton("Очень толстая (30px)", callback_data="thickness_xthick")],
+            [InlineKeyboardButton("Назад", callback_data="action_back"),
+             InlineKeyboardButton("Отмена", callback_data="action_cancel")],
+        ]
         await query.edit_message_text(
-            f"Цвет фона установлен: **{bg_names[query.data]}**\n\n"
-            "Выбери толщину обводки (рамки) для фотографии в демотиваторе:",
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("Тонкая (4px)", callback_data="thickness_thin"),
-                    InlineKeyboardButton("Обычная (10px)", callback_data="thickness_normal"),
-                ],
-                [
-                    InlineKeyboardButton("Толстая (20px)", callback_data="thickness_thick"),
-                    InlineKeyboardButton("Очень толстая (30px)", callback_data="thickness_xthick"),
-                ],
-                [
-                    InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-                    InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-                ],
-            ])
+            f"Фон: **{bg_names[query.data]}**\n\nВыбери рамку:",
+            parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
 
-    thickness_map = {
-        "thickness_thin": 4,
-        "thickness_normal": 10,
-        "thickness_thick": 20,
-        "thickness_xthick": 30,
-    }
-    thickness_names = {
-        "thickness_thin": "Тонкая (4px)",
-        "thickness_normal": "Обычная (10px)",
-        "thickness_thick": "Толстая (20px)",
-        "thickness_xthick": "Очень толстая (30px)",
-    }
+    # === РАМКА ===
+    thickness_map = {"thickness_thin": 4, "thickness_normal": 10, "thickness_thick": 20, "thickness_xthick": 30}
     if query.data in thickness_map:
         user_data[user_id]['border_thickness'] = thickness_map[query.data]
         await query.edit_message_text(
-            f"Толщина рамки установлена: **{thickness_names[query.data]}**\n\n"
-            "Теперь отправь текст в формате:\n"
-            "- 'Верхний текст|Нижний текст' (для обычного)\n"
-            "- 'Текст' (для типа 'внизу')",
+            f"Рамка: **{query.data.split('_')[1].capitalize()}**\n\n"
+            "Отправь текст:\n"
+            "- 'Верхний|Нижний'\n"
+            "- 'Текст' (только снизу)",
             parse_mode='Markdown'
         )
         return
 
+    # === ШРИФТЫ ===
     font_map = {
-        "font_molodost": "Molodost.ttf",
-        "font_roboto": "Roboto_Bold.ttf",
-        "font_times": "Times New Roman Bold Italic.ttf",
-        "font_nougat": "Nougat Regular.ttf",
-        "font_maratype": "Maratype Regular.ttf",
-        "font_farabee": "Farabee Bold.ttf",
-        "font_impact": "Impact.ttf",
-        "font_anton": "Anton-Regular.ttf",
-        "font_comicsans": "Comic Sans MS.ttf",
-        "font_arial_black": "Arial_black.ttf",
+        "font_molodost": "Molodost.ttf", "font_roboto": "Roboto_Bold.ttf",
+        "font_times": "Times New Roman Bold Italic.ttf", "font_nougat": "Nougat Regular.ttf",
+        "font_maratype": "Maratype Regular.ttf", "font_farabee": "Farabee Bold.ttf",
+        "font_impact": "Impact.ttf", "font_anton": "Anton-Regular.ttf",
+        "font_comicsans": "Comic Sans MS.ttf", "font_arial_black": "Arial_black.ttf",
     }
-    
-    font_names = {
-        "font_molodost": "Molodost Regular",
-        "font_roboto": "Roboto Bold",
-        "font_times": "Times New Roman Bold Italic",
-        "font_nougat": "Nougat Regular",
-        "font_maratype": "Maratype Regular",
-        "font_farabee": "Farabee Bold",
-        "font_impact": "Impact",
-        "font_anton": "Anton",
-        "font_comicsans": "Comic Sans MS",
-        "font_arial_black": "Arial Black",
-    }
-    
+    font_names = {k: v.split('.')[0].replace('_', ' ') for k, v in font_map.items()}
     if query.data in font_map:
         user_data[user_id]['font_file'] = font_map[query.data]
-        
-        if 'photo' in user_data[user_id]:
-            keyboard = [
-                [
-                    InlineKeyboardButton("Обычный (верх+низ)", callback_data="type_normal"),
-                ],
-                [
-                    InlineKeyboardButton("С текстом внизу", callback_data="type_bottom_only"),
-                ],
-                [
-                    InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-                    InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(
-                f"Шрифт установлен: **{font_names.get(query.data, query.data)}**\n\n"
-                "Выбери тип демотиватора:",
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
-        else:
-            await query.edit_message_text(
-                f"Шрифт установлен: **{font_names.get(query.data, query.data)}**\n\n"
-                "Теперь отправь фото.",
-                parse_mode='Markdown'
-            )
+        keyboard = [
+            [InlineKeyboardButton("Обычный (верх+низ)", callback_data="type_normal")],
+            [InlineKeyboardButton("Только снизу", callback_data="type_bottom_only")],
+            [InlineKeyboardButton("Назад", callback_data="action_back"),
+             InlineKeyboardButton("Отмена", callback_data="action_cancel")],
+        ]
+        await query.edit_message_text(
+            f"Шрифт: **{font_names[query.data]}**\n\nВыбери тип:",
+            parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return
 
+    # === ТИП МЕМА ===
     if query.data in ["meme_classic", "meme_demotivator"]:
         user_data[user_id]['meme_type'] = query.data
-        
         if user_id not in user_messages:
             user_messages[user_id] = []
-        if query.message.message_id not in user_messages[user_id]:
-            user_messages[user_id].append(query.message.message_id)
-        
+        user_messages[user_id].append(query.message.message_id)
+
         if query.data == "meme_classic":
             keyboard = [
-                [
-                    InlineKeyboardButton("Impact", callback_data="classic_font_impact"),
-                ],
-                [
-                    InlineKeyboardButton("Lobster Regular", callback_data="classic_font_lobster"),
-                ],
-                [
-                    InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-                    InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-                ]
+                [InlineKeyboardButton("Impact", callback_data="classic_font_impact")],
+                [InlineKeyboardButton("Lobster", callback_data="classic_font_lobster")],
+                [InlineKeyboardButton("Назад", callback_data="action_back"),
+                 InlineKeyboardButton("Отмена", callback_data="action_cancel")],
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(
-                "Выбран тип: **Классический мем**\n\n"
-                "Выбери шрифт:",
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
+            await query.edit_message_text("Выбран: **Классический мем**\n\nШрифт:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         else:
-            reply_markup = show_font_selection(user_id)
-            await query.edit_message_text(
-                "Выбран тип: **Демотиватор**\n\n"
-                "Выбери шрифт:",
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
+            await query.edit_message_text("Выбран: **Демотиватор**\n\nШрифт:", parse_mode='Markdown', reply_markup=show_font_selection(user_id))
         return
 
+    # === КЛАССИЧЕСКИЙ ШРИФТ ===
     if query.data in ["classic_font_impact", "classic_font_lobster"]:
-        font_map_local = {
-            "classic_font_impact": "Impact.ttf",
-            "classic_font_lobster": "Lobster.ttf",
-        }
-        font_names_local = {
-            "classic_font_impact": "Impact",
-            "classic_font_lobster": "Lobster Regular",
-        }
-        user_data[user_id]['classic_font'] = font_map_local[query.data]
-        
+        fmap = {"classic_font_impact": "Impact.ttf", "classic_font_lobster": "Lobster.ttf"}
+        user_data[user_id]['classic_font'] = fmap[query.data]
         keyboard = [
-            [
-                InlineKeyboardButton("Верхний и нижний текст", callback_data="classic_type_normal"),
-            ],
-            [
-                InlineKeyboardButton("Только нижний текст", callback_data="classic_type_bottom_only"),
-            ],
-            [
-                InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-                InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-            ]
+            [InlineKeyboardButton("Верх+низ", callback_data="classic_type_normal")],
+            [InlineKeyboardButton("Только низ", callback_data="classic_type_bottom_only")],
+            [InlineKeyboardButton("Назад", callback_data="action_back"),
+             InlineKeyboardButton("Отмена", callback_data="action_cancel")],
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(
-            f"Шрифт установлен: **{font_names_local[query.data]}**\n\n"
-            "Выбери тип классического мема:",
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
+        await query.edit_message_text(f"Шрифт: **{query.data.split('_')[-1].capitalize()}**\n\nТип:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
+    # === ТИП КЛАССИЧЕСКОГО ===
     if query.data in ["classic_type_normal", "classic_type_bottom_only"]:
         user_data[user_id]['classic_type'] = query.data
-        
-        type_names = {
-            "classic_type_normal": "Верхний и нижний текст",
-            "classic_type_bottom_only": "Только нижний текст",
-        }
-        
-        if 'caption_top' in user_data.get(user_id, {}):
-            classic_type = user_data[user_id].get('classic_type', 'classic_type_normal')
-            if classic_type == 'classic_type_bottom_only':
-                top_text = ""
-                bottom_text = user_data[user_id].get('caption_top', '') + ((' ' + user_data[user_id].get('caption_bottom', '')) if user_data[user_id].get('caption_bottom', '') else '')
-            else:
-                top_text = user_data[user_id]['caption_top']
-                bottom_text = user_data[user_id].get('caption_bottom', '')
-            
-            try:
-                if user_id in user_messages:
-                    for msg_id in user_messages[user_id]:
-                        try:
-                            await context.bot.delete_message(chat_id=query.message.chat.id, message_id=msg_id)
-                        except:
-                            pass
-                    user_messages[user_id] = []
-                
-                photo_bytes = user_data[user_id]['photo']
-                photo_bytes.seek(0)
-                classic_font = user_data[user_id].get('classic_font', 'Impact.ttf')
-                is_gif = user_data[user_id].get('is_gif', False)
-                
-                if is_gif:
-                    meme = create_classic_meme_gif(photo_bytes, top_text, bottom_text, classic_font)
-                    result_msg = await query.message.reply_animation(animation=meme, caption="Ваш мем готов!\n\n @memfy_bot")
-                else:
-                    meme = create_classic_meme(photo_bytes, top_text, bottom_text, classic_font)
-                    result_msg = await query.message.reply_photo(photo=meme, caption="Ваш мем готов!\n\n @memfy_bot")
-                
-                try:
-                    await context.bot.delete_message(chat_id=query.message.chat.id, message_id=query.message.message_id)
-                except:
-                    pass
-                
-                for key in ['photo', 'caption_top', 'caption_bottom', 'meme_type', 'classic_font', 'classic_type', 'is_gif']:
-                    user_data[user_id].pop(key, None)
-            except Exception as e:
-                logger.error(f"Ошибка при создании классического мема: {e}")
-                await query.edit_message_text("Произошла ошибка при создании мема. Попробуй еще раз.")
+        if 'caption_top' in user_data[user_id]:
+            # Обработка с подписью
+            pass  # (логика в handle_text)
         else:
-            classic_type = user_data[user_id].get('classic_type', 'classic_type_normal')
-            if classic_type == 'classic_type_bottom_only':
-                text_instruction = "Отправь текст (будет размещен только внизу)"
-            else:
-                text_instruction = "Отправь текст в формате:\n'Верхний текст|Нижний текст'"
-            
-            await query.edit_message_text(
-                f"Тип установлен: **{type_names[classic_type]}**\n\n"
-                f"{text_instruction}\n\n"
-                "Будет использован белый цвет, большой размер.",
-                parse_mode='Markdown'
-            )
+            instr = "Текст: 'Верхний|Нижний'" if query.data == "classic_type_normal" else "Текст (только снизу)"
+            await query.edit_message_text(f"Тип: **{'Верх+низ' if 'normal' in query.data else 'Только низ'}**\n\n{instr}", parse_mode='Markdown')
         return
 
+    # === ТИП ДЕМОТИВАТОРА ===
     if query.data in ["type_normal", "type_bottom_only"]:
         user_data[user_id]['demotivator_type'] = query.data
-        
-        type_names = {
-            "type_normal": "Обычный (верх+низ)",
-            "type_bottom_only": "С текстом внизу",
-        }
-        
         keyboard = [
-            [
-                InlineKeyboardButton("Маленький", callback_data="size_small"),
-                InlineKeyboardButton("Средний", callback_data="size_medium"),
-            ],
-            [
-                InlineKeyboardButton("Большой", callback_data="size_large"),
-                InlineKeyboardButton("Очень большой", callback_data="size_xlarge"),
-            ],
-            [
-                InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-                InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-            ]
+            [InlineKeyboardButton("Маленький", callback_data="size_small"),
+             InlineKeyboardButton("Средний", callback_data="size_medium")],
+            [InlineKeyboardButton("Большой", callback_data="size_large"),
+             InlineKeyboardButton("Очень большой", callback_data="size_xlarge")],
+            [InlineKeyboardButton("Назад", callback_data="action_back"),
+             InlineKeyboardButton("Отмена", callback_data="action_cancel")],
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(
-            f"Тип демотиватора: **{type_names[query.data]}**\n\n"
-            "Выбери размер шрифта:",
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
+        await query.edit_message_text("Тип: **{'Обычный' if 'normal' in query.data else 'Только снизу'}**\n\nРазмер:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
+    # === ШАКАЛИЗАЦИЯ ===
     if query.data == "shakalize_menu":
         keyboard = [
-            [
-                InlineKeyboardButton("Мягкая зашакалка", callback_data="shakalize_mild"),
-                InlineKeyboardButton("Лёгкая зашакалка", callback_data="shakalize_light"),
-            ],
-            [
-                InlineKeyboardButton("Средняя зашакалка", callback_data="shakalize_medium"),
-                InlineKeyboardButton("Жёсткая зашакалка", callback_data="shakalize_hard"),
-            ],
-            [
-                InlineKeyboardButton("Экстремальная зашакалка", callback_data="shakalize_extreme"),
-            ],
-            [
-                InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-                InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-            ]
+            [InlineKeyboardButton("Мягкая", callback_data="shakalize_mild"),
+             InlineKeyboardButton("Лёгкая", callback_data="shakalize_light")],
+            [InlineKeyboardButton("Средняя", callback_data="shakalize_medium"),
+             InlineKeyboardButton("Жёсткая", callback_data="shakalize_hard")],
+            [InlineKeyboardButton("Экстремальная", callback_data="shakalize_extreme")],
+            [InlineKeyboardButton("Назад", callback_data="action_back"),
+             InlineKeyboardButton("Отмена", callback_data="action_cancel")],
         ]
-        await query.edit_message_text("Выбери уровень ухудшения (шакализации):", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("Выбери уровень шакализации:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    if query.data in ["shakalize_mild", "shakalize_light", "shakalize_medium", "shakalize_hard", "shakalize_extreme"]:
+    if query.data.startswith("shakalize_") and query.data != "shakalize_menu":
         level = query.data.split('_')[-1]
+        if level == "glitch":
+            await query.edit_message_text("Глитч удалён.")
+            return
         try:
-            if 'photo' not in user_data.get(user_id, {}):
+            if 'photo' not in user_data[user_id]:
                 await query.edit_message_text("Сначала отправь фото.")
                 return
             photo_bytes = user_data[user_id]['photo']
             photo_bytes.seek(0)
             result = shakalize_image(photo_bytes, intensity=level)
-            await query.message.reply_photo(photo=result, caption="Вот, зашакалил. 🤝\n\n @memfy_bot")
+            await query.message.reply_photo(photo=result, caption="Зашакалил!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
             if user_id in user_messages:
                 for msg_id in user_messages[user_id]:
                     try:
@@ -619,174 +379,202 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_messages[user_id] = []
             user_data[user_id].pop('photo', None)
         except Exception as e:
-            logger.error(f"Ошибка при шакализации: {e}")
-            await query.edit_message_text("Не удалось зашакалить фото.")
+            logger.error(f"Шакализация: {e}")
+            await query.edit_message_text("Ошибка.")
         return
 
 
 def show_font_selection(user_id: int) -> InlineKeyboardMarkup:
     keyboard = [
-        [
-            InlineKeyboardButton("Molodost Regular", callback_data="font_molodost"),
-        ],
-        [
-            InlineKeyboardButton("Roboto Bold", callback_data="font_roboto"),
-        ],
-        [
-            InlineKeyboardButton("Times New Roman Bold Italic", callback_data="font_times"),
-        ],
-        [
-            InlineKeyboardButton("Nougat Regular", callback_data="font_nougat"),
-        ],
-        [
-            InlineKeyboardButton("Maratype Regular", callback_data="font_maratype"),
-        ],
-        [
-            InlineKeyboardButton("Farabee Bold", callback_data="font_farabee"),
-        ],
-        [
-            InlineKeyboardButton("Impact", callback_data="font_impact"),
-            InlineKeyboardButton("Anton", callback_data="font_anton"),
-        ],
-        [
-            InlineKeyboardButton("Comic Sans", callback_data="font_comicsans"),
-            InlineKeyboardButton("Arial Black", callback_data="font_arial_black"),
-        ],
-        [
-            InlineKeyboardButton("⬅️ Назад", callback_data="action_back"),
-            InlineKeyboardButton("❌ Отмена", callback_data="action_cancel"),
-        ]
+        [InlineKeyboardButton("Molodost", callback_data="font_molodost")],
+        [InlineKeyboardButton("Roboto Bold", callback_data="font_roboto")],
+        [InlineKeyboardButton("Times New Roman", callback_data="font_times")],
+        [InlineKeyboardButton("Nougat", callback_data="font_nougat")],
+        [InlineKeyboardButton("Maratype", callback_data="font_maratype")],
+        [InlineKeyboardButton("Farabee Bold", callback_data="font_farabee")],
+        [InlineKeyboardButton("Impact", callback_data="font_impact"),
+         InlineKeyboardButton("Anton", callback_data="font_anton")],
+        [InlineKeyboardButton("Comic Sans", callback_data="font_comicsans"),
+         InlineKeyboardButton("Arial Black", callback_data="font_arial_black")],
+        [InlineKeyboardButton("Назад", callback_data="action_back"),
+         InlineKeyboardButton("Отмена", callback_data="action_cancel")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
+# === ОБРАБОТКА ФОТО ===
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_type = update.message.chat.type
-    
-    is_gif = False
+
+    # GIF или фото
     if update.message.animation:
         file = await context.bot.get_file(update.message.animation.file_id)
-        photo_bytes = io.BytesIO()
-        await file.download_to_memory(photo_bytes)
-        photo_bytes.seek(0)
         is_gif = True
+        media_type = 'gif'
     else:
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
-        photo_bytes = io.BytesIO()
-        await file.download_to_memory(photo_bytes)
-        photo_bytes.seek(0)
-    
-    caption = update.message.caption or ""
-    
+        is_gif = False
+        media_type = 'photo'
+
+    photo_bytes = io.BytesIO()
+    await file.download_to_memory(photo_bytes)
+    photo_bytes.seek(0)
+
+    # Проверка размера
+    if len(photo_bytes.getvalue()) > 50 * 1024 * 1024:
+        await update.message.reply_text("Файл слишком большой (макс 50MB).")
+        return
+
+    caption = (update.message.caption or "").strip()
+    bot_username = context.bot.username.lower()
+
+    # Группа: проверка упоминания
     if chat_type in ['group', 'supergroup']:
-        bot_username = context.bot.username.lower()
         mentioned = False
-        if caption:
-            if f"@memfy_bot" in caption.lower():
-                mentioned = True
-            if update.message.entities or update.message.caption_entities:
-                entities = update.message.caption_entities or update.message.entities or []
-                for entity in entities:
-                    if entity.type == "mention":
-                        mention_text = caption[entity.offset:entity.offset + entity.length].lower()
-                        if f"@memfy_bot" == mention_text:
-                            mentioned = True
-                            break
-        
+        if caption and f"@memfy_bot" in caption.lower():
+            mentioned = True
+        elif update.message.caption_entities:
+            for e in update.message.caption_entities:
+                if e.type == "mention":
+                    mention = caption[e.offset:e.offset+e.length].lower()
+                    if mention in [f"@memfy_bot", f"@{bot_username}"]:
+                        mentioned = True
+                        break
         if not mentioned:
             return
-        
-        if caption:
-            caption = caption.replace(f"@{bot_username}", "").replace(f"@memfy_bot", "").strip()
-            caption = " ".join(caption.split())
-    
+        caption = caption.replace(f"@{bot_username}", "").replace("@memfy_bot", "").strip()
+
     if user_id not in user_data:
         user_data[user_id] = {}
     user_data[user_id]['photo'] = photo_bytes
     user_data[user_id]['is_gif'] = is_gif
-    
+    user_data[user_id]['media_type'] = media_type
+
     if caption and '|' in caption:
         texts = caption.split('|', 1)
         user_data[user_id]['caption_top'] = texts[0].strip()
         user_data[user_id]['caption_bottom'] = texts[1].strip() if len(texts) > 1 else ""
-    
+
+    # Обработка GIF с текстом
+    if is_gif and 'gif_text' in user_data[user_id]:
+        text = user_data[user_id]['gif_text']
+        options = user_data[user_id].get('options', {})
+        try:
+            result = add_text_to_gif(photo_bytes, text, options)
+            await update.message.reply_animation(animation=result, caption="GIF с текстом готов!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+            user_data[user_id].pop('gif_text', None)
+            user_data[user_id].pop('options', None)
+            user_data[user_id].pop('photo', None)
+            return
+        except Exception as e:
+            logger.error(f"Ошибка GIF: {e}")
+            await update.message.reply_text("Ошибка обработки GIF.")
+
     if user_id not in user_messages:
         user_messages[user_id] = []
     user_messages[user_id].append(update.message.message_id)
-    
+
     keyboard = [
-        [
-            InlineKeyboardButton("Классический мем", callback_data="meme_classic"),
-        ],
-        [
-            InlineKeyboardButton("Демотиватор", callback_data="meme_demotivator"),
-        ],
-        [
-            InlineKeyboardButton("Зашакалить", callback_data="shakalize_menu"),
-        ]
+        [InlineKeyboardButton("Классический мем", callback_data="meme_classic")],
+        [InlineKeyboardButton("Демотиватор", callback_data="meme_demotivator")],
+        [InlineKeyboardButton("Зашакалить", callback_data="shakalize_menu")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    sent_msg = await update.message.reply_text(
-        "Отлично! Фото получено.\n\n"
-        "Выбери тип мема или действие:",
-        reply_markup=reply_markup
+    sent = await update.message.reply_text(
+        "Фото получено!\n\nВыбери действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    
-    user_messages[user_id].append(sent_msg.message_id)
+    user_messages[user_id].append(sent.message_id)
 
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# === ОБРАБОТКА ВИДЕО ===
+async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_type = update.message.chat.type
-    
+
+    video = update.message.video
+    file = await context.bot.get_file(video.file_id)
+    video_bytes = io.BytesIO()
+    await file.download_to_memory(video_bytes)
+    video_bytes.seek(0)
+
+    # Проверка размера
+    if len(video_bytes.getvalue()) > 50 * 1024 * 1024:
+        await update.message.reply_text("Файл слишком большой (макс 50MB).")
+        return
+
+    caption = (update.message.caption or "").strip()
+    bot_username = context.bot.username.lower()
+
+    # Группа: проверка упоминания
     if chat_type in ['group', 'supergroup']:
-        if user_id not in user_data or 'photo' not in user_data[user_id]:
+        mentioned = False
+        if caption and f"@memfy_bot" in caption.lower():
+            mentioned = True
+        elif update.message.caption_entities:
+            for e in update.message.caption_entities:
+                if e.type == "mention":
+                    mention = caption[e.offset:e.offset+e.length].lower()
+                    if mention in [f"@memfy_bot", f"@{bot_username}"]:
+                        mentioned = True
+                        break
+        if not mentioned:
             return
-    
+        caption = caption.replace(f"@{bot_username}", "").replace("@memfy_bot", "").strip()
+
+    if user_id not in user_data:
+        user_data[user_id] = {}
+    user_data[user_id]['video'] = video_bytes
+
+    if 'video_text' in user_data[user_id]:
+        # Обработка с текстом
+        text = user_data[user_id]['video_text']
+        options = user_data[user_id].get('options', {})
+        try:
+            result = add_text_to_video(video_bytes, text, options)
+            await update.message.reply_video(video=result, caption="Видео с текстом готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+            user_data[user_id].pop('video_text', None)
+            user_data[user_id].pop('options', None)
+            user_data[user_id].pop('video', None)
+        except Exception as e:
+            logger.error(f"Ошибка видео: {e}")
+            await update.message.reply_text("Ошибка обработки видео.")
+    else:
+        await update.message.reply_text("Видео получено. Используй /video_text для добавления текста.")
+
+
+# === ОБРАБОТКА ТЕКСТА ===
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     if user_id not in user_data or 'photo' not in user_data[user_id]:
-        if chat_type == 'private':
-            await update.message.reply_text(
-                "Сначала отправь мне фото, затем выбери тип мема и отправь текст."
-            )
+        if update.message.chat.type == 'private':
+            await update.message.reply_text("Сначала отправь фото.")
         return
-    
-    meme_type = user_data.get(user_id, {}).get('meme_type')
+
+    meme_type = user_data[user_id].get('meme_type')
     if not meme_type:
-        await update.message.reply_text(
-            "Сначала выбери тип мема (классический или демотиватор), нажав на кнопки после отправки фото."
-        )
+        await update.message.reply_text("Сначала выбери тип мема.")
         return
-    
-    text = update.message.text
+
+    text = update.message.text.strip()
     photo_bytes = user_data[user_id]['photo']
     photo_bytes.seek(0)
-    
+
     try:
         if meme_type == 'meme_classic':
-            if 'classic_font' not in user_data.get(user_id, {}):
-                await update.message.reply_text(
-                    "Сначала выбери шрифт (Impact или Lobster), нажав на кнопки после выбора типа мема."
-                )
+            if 'classic_font' not in user_data[user_id]:
+                await update.message.reply_text("Выбери шрифт.")
                 return
-            
-            classic_type = user_data.get(user_id, {}).get('classic_type', 'classic_type_normal')
-            
-            if classic_type == 'classic_type_bottom_only':
-                top_text = ""
-                bottom_text = text.strip()
+            ctype = user_data[user_id].get('classic_type', 'classic_type_normal')
+            if ctype == 'classic_type_bottom_only':
+                top, bottom = "", text
             else:
                 if '|' not in text:
-                    await update.message.reply_text(
-                        "Для типа 'верхний и нижний' используй формат: 'Верхний текст|Нижний текст'"
-                    )
+                    await update.message.reply_text("Формат: 'Верхний|Нижний'")
                     return
-                texts = text.split('|', 1)
-                top_text = texts[0].strip()
-                bottom_text = texts[1].strip() if len(texts) > 1 else ""
-            
+                top, bottom = [t.strip() for t in text.split('|', 1)]
+
             if user_id in user_messages:
                 for msg_id in user_messages[user_id]:
                     try:
@@ -794,44 +582,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except:
                         pass
                 user_messages[user_id] = []
-            
-            classic_font = user_data[user_id].get('classic_font', 'Impact.ttf')
+
+            font = user_data[user_id]['classic_font']
             is_gif = user_data[user_id].get('is_gif', False)
-            
             if is_gif:
-                meme = create_classic_meme_gif(photo_bytes, top_text, bottom_text, classic_font)
-                result_msg = await update.message.reply_animation(animation=meme, caption="Ваш мем готов!\n\n @memfy_bot")
+                meme = create_classic_meme_gif(photo_bytes, top, bottom, font)
+                await update.message.reply_animation(animation=meme, caption="Готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
             else:
-                meme = create_classic_meme(photo_bytes, top_text, bottom_text, classic_font)
-                result_msg = await update.message.reply_photo(photo=meme, caption="Ваш мем готов!\n\n @memfy_bot")
-            
-            try:
-                await context.bot.delete_message(chat_id=update.message.chat.id, message_id=update.message.message_id)
-            except:
-                pass
-            
-        else:
-            if 'font_file' not in user_data.get(user_id, {}):
-                await update.message.reply_text(
-                    "Сначала выбери шрифт, нажав на кнопки после отправки фото."
-                )
+                meme = create_classic_meme(photo_bytes, top, bottom, font)
+                await update.message.reply_photo(photo=meme, caption="Готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+
+        else:  # демотиватор
+            if 'font_file' not in user_data[user_id]:
+                await update.message.reply_text("Выбери шрифт.")
                 return
-            
-            demotivator_type = user_data.get(user_id, {}).get('demotivator_type', 'type_normal')
-            
-            if demotivator_type == 'type_bottom_only':
-                top_text = ""
-                bottom_text = text.strip()
+            dtype = user_data[user_id].get('demotivator_type', 'type_normal')
+            if dtype == 'type_bottom_only':
+                top, bottom = "", text
             else:
                 if '|' not in text:
-                    await update.message.reply_text(
-                        "Для обычного типа используй формат: 'Верхний текст|Нижний текст'"
-                    )
+                    await update.message.reply_text("Формат: 'Верхний|Нижний'")
                     return
-                texts = text.split('|', 1)
-                top_text = texts[0].strip()
-                bottom_text = texts[1].strip() if len(texts) > 1 else ""
-            
+                top, bottom = [t.strip() for t in text.split('|', 1)]
+
             if user_id in user_messages:
                 for msg_id in user_messages[user_id]:
                     try:
@@ -839,513 +612,459 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except:
                         pass
                 user_messages[user_id] = []
-            
-            font_size = user_data.get(user_id, {}).get('font_size')
-            font_file = user_data[user_id]['font_file']
-            font_color = user_data.get(user_id, {}).get('font_color', 'white')
-            border_thickness = user_data.get(user_id, {}).get('border_thickness', 10)
-            bg_color = user_data.get(user_id, {}).get('bg_color', (0, 0, 0))
-            demotivator = create_demotivator(photo_bytes, top_text, bottom_text, font_size, font_file, demotivator_type, font_color, border_thickness, bg_color)
-            result_msg = await update.message.reply_photo(photo=demotivator, caption="Ваш демотиватор готов!\n\n @memfy_bot")
-            
-            try:
-                await context.bot.delete_message(chat_id=update.message.chat.id, message_id=update.message.message_id)
-            except:
-                pass
-        
-        for key in ['photo', 'meme_type', 'classic_font', 'classic_type', 'is_gif', 'font_color', 'bg_color', 'border_thickness']:
+
+            demotivator = create_demotivator(
+                photo_bytes, top, bottom,
+                font_size=user_data[user_id].get('font_size'),
+                font_file=user_data[user_id]['font_file'],
+                demotivator_type=dtype,
+                font_color=user_data[user_id].get('font_color', 'white'),
+                border_thickness=user_data[user_id].get('border_thickness', 10),
+                bg_color=user_data[user_id].get('bg_color', (0, 0, 0))
+            )
+            await update.message.reply_photo(photo=demotivator, caption="Демотиватор готов!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+
+        # Очистка
+        for key in ['photo', 'meme_type', 'classic_font', 'classic_type', 'is_gif', 'font_file', 'font_size', 'font_color', 'bg_color', 'border_thickness', 'demotivator_type']:
             user_data[user_id].pop(key, None)
-        
+
     except Exception as e:
-        logger.error(f"Ошибка при создании мема: {e}")
-        await update.message.reply_text("Произошла ошибка при создании мема. Попробуй еще раз.")
+        logger.error(f"Ошибка: {e}")
+        await update.message.reply_text("Ошибка. Попробуй снова.")
 
 
+# === КЛАССИЧЕСКИЙ МЕМ ===
 def create_classic_meme(photo_bytes: io.BytesIO, top_text: str, bottom_text: str, font_file: str = "Impact.ttf") -> io.BytesIO:
-    photo_bytes.seek(0)
-    image = Image.open(photo_bytes)
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
-    img_width, img_height = image.size
-    font_size = max(40, int(img_width / 20))
-    text_color = (255, 255, 255)
-    font_paths = [
-        os.path.join(FONT_DIR, font_file),
-        font_file,
-    ]
-    font = None
+    image = Image.open(photo_bytes).convert('RGB')
+    w, h = image.size
+    font_size = max(40, int(w / 20))
+    font_paths = [os.path.join(FONT_DIR, font_file), font_file]
+    font = ImageFont.load_default()
     for path in font_paths:
         try:
             font = ImageFont.truetype(path, font_size)
-            logger.info(f"Шрифт {font_file} загружен: {path}")
             break
-        except Exception as e:
-            logger.warning(f"Не удалось загрузить {path}: {e}")
+        except:
             continue
-    if font is None:
-        logger.error(f"Шрифт {font_file} не найден, используется стандартный шрифт")
-        font = ImageFont.load_default()
-    meme = image.copy()
-    draw = ImageDraw.Draw(meme)
 
-    def wrap_text(text, font, max_width):
+    draw = ImageDraw.Draw(image)
+
+    def draw_outline(text, pos, fill=(255,255,255), outline=(0,0,0), width=2):
+        x, y = pos
+        for adj in range(-width, width+1):
+            for adj2 in range(-width, width+1):
+                if adj or adj2:
+                    draw.text((x+adj, y+adj2), text, font=font, fill=outline)
+        draw.text(pos, text, font=font, fill=fill)
+
+    def wrap(text, max_w):
         words = text.split()
         lines = []
-        current_line = []
+        line = []
         for word in words:
-            test_line = ' '.join(current_line + [word])
-            bbox = draw.textbbox((0, 0), test_line, font=font)
-            width = bbox[2] - bbox[0]
-            if width <= max_width:
-                current_line.append(word)
+            test = ' '.join(line + [word])
+            if draw.textbbox((0,0), test, font=font)[2] <= max_w:
+                line.append(word)
             else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                current_line = [word]
-        if current_line:
-            lines.append(' '.join(current_line))
-        return lines if lines else [text]
-
-    def draw_text_with_outline(draw, position, text, font, fill_color, outline_color=(0, 0, 0), outline_width=2):
-        x, y = position
-        for adj in range(-outline_width, outline_width + 1):
-            for adj2 in range(-outline_width, outline_width + 1):
-                if adj != 0 or adj2 != 0:
-                    draw.text((x + adj, y + adj2), text, font=font, fill=outline_color)
-        draw.text(position, text, font=font, fill=fill_color)
+                lines.append(' '.join(line))
+                line = [word]
+        if line:
+            lines.append(' '.join(line))
+        return lines
 
     if top_text:
-        max_text_width = img_width - 40
-        top_lines = wrap_text(top_text, font, max_text_width)
-        y_offset = 20
-        for line in top_lines:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            text_width = bbox[2] - bbox[0]
-            x = (img_width - text_width) // 2
-            draw_text_with_outline(draw, (x, y_offset), line, font, text_color)
-            y_offset += int(font_size * 1.3)
+        lines = wrap(top_text, w - 40)
+        y = 10
+        for line in lines:
+            tw = draw.textbbox((0,0), line, font=font)[2]
+            draw_outline(line, ((w - tw) // 2, y))
+            y += int(font_size * 1.3)
 
     if bottom_text:
-        max_text_width = img_width - 40
-        bottom_lines = wrap_text(bottom_text, font, max_text_width)
-        total_bottom_height = len(bottom_lines) * int(font_size * 1.3)
-        y_offset = img_height - total_bottom_height - 20
-        for line in bottom_lines:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            text_width = bbox[2] - bbox[0]
-            x = (img_width - text_width) // 2
-            draw_text_with_outline(draw, (x, y_offset), line, font, text_color)
-            y_offset += int(font_size * 1.3)
+        lines = wrap(bottom_text, w - 40)
+        y = h - len(lines) * int(font_size * 1.3) - 10
+        for line in lines:
+            tw = draw.textbbox((0,0), line, font=font)[2]
+            draw_outline(line, ((w - tw) // 2, y))
+            y += int(font_size * 1.3)
 
-    watermark_text = "@memfy_bot"
-    watermark_size = 16
-    watermark_font_paths = [
-        os.path.join(FONT_DIR, "Roboto_Bold.ttf"),
-        "Roboto_Bold.ttf",
-    ]
-    watermark_font = None
-    for path in watermark_font_paths:
-        try:
-            watermark_font = ImageFont.truetype(path, watermark_size)
-            break
-        except:
-            continue
-    if watermark_font is None:
-        watermark_font = ImageFont.load_default()
-    bbox = draw.textbbox((0, 0), watermark_text, font=watermark_font)
-    watermark_width = bbox[2] - bbox[0]
-    watermark_height = bbox[3] - bbox[1]
-    watermark_img = Image.new('RGBA', (watermark_width + 10, watermark_height + 5), (0, 0, 0, 0))
-    watermark_draw = ImageDraw.Draw(watermark_img)
-    watermark_draw.text((5, 0), watermark_text, fill=(255, 255, 255, 128), font=watermark_font)
-    offset = 15
-    corners = [
-        (offset, offset),
-        (img_width - watermark_width - offset, offset),
-        (offset, img_height - watermark_height - offset),
-        (img_width - watermark_width - offset, img_height - watermark_height - offset),
-    ]
-    watermark_x, watermark_y = random.choice(corners)
-    meme_rgba = meme.convert('RGBA')
-    meme_rgba.paste(watermark_img, (watermark_x, watermark_y), watermark_img)
-    meme = meme_rgba.convert('RGB')
-    output = io.BytesIO()
-    meme.save(output, format='JPEG', quality=95)
-    output.seek(0)
-    return output
+    # Водяной знак
+    wm_text = "@memfy_bot"
+    wm_font = ImageFont.truetype(os.path.join(FONT_DIR, "Roboto_Bold.ttf"), 16) if os.path.exists(os.path.join(FONT_DIR, "Roboto_Bold.ttf")) else ImageFont.load_default()
+    tw, th = draw.textbbox((0,0), wm_text, font=wm_font)[2:]
+    wm_img = Image.new('RGBA', (tw + 10, th + 5), (0,0,0,0))
+    wm_draw = ImageDraw.Draw(wm_img)
+    wm_draw.text((5,0), wm_text, fill=(255,255,255,128), font=wm_font)
+    corners = [(10,10), (w-tw-20,10), (10,h-th-20), (w-tw-20,h-th-20)]
+    image.paste(wm_img, random.choice(corners), wm_img)
 
-def create_classic_meme_gif(photo_bytes: io.BytesIO, top_text: str, bottom_text: str, font_file: str = "Impact.ttf") -> io.BytesIO:
-    photo_bytes.seek(0)
-    gif = Image.open(photo_bytes)
-    if not getattr(gif, 'is_animated', False):
-        return create_classic_meme(photo_bytes, top_text, bottom_text, font_file)
-    gif.seek(0)
-    first_frame = gif.copy()
-    if first_frame.mode != 'RGB':
-        first_frame = first_frame.convert('RGB')
-    img_width, img_height = first_frame.size
-    font_size = max(40, int(img_width / 20))
-    text_color = (255, 255, 255)
-    font_paths = [
-        os.path.join(FONT_DIR, font_file),
-        font_file,
-    ]
-    font = None
-    for path in font_paths:
-        try:
-            font = ImageFont.truetype(path, font_size)
-            logger.info(f"Шрифт {font_file} загружен: {path}")
-            break
-        except Exception as e:
-            logger.warning(f"Не удалось загрузить {path}: {e}")
-            continue
-    if font is None:
-        logger.error(f"Шрифт {font_file} не найден, используется стандартный шрифт")
-        font = ImageFont.load_default()
-    watermark_text = "@memfy_bot"
-    watermark_size = 16
-    watermark_font_paths = [
-        os.path.join(FONT_DIR, "Roboto_Bold.ttf"),
-        "Roboto_Bold.ttf",
-    ]
-    watermark_font = None
-    for path in watermark_font_paths:
-        try:
-            watermark_font = ImageFont.truetype(path, watermark_size)
-            break
-        except:
-            continue
-    if watermark_font is None:
-        watermark_font = ImageFont.load_default()
+    out = io.BytesIO()
+    image.save(out, format='JPEG', quality=95)
+    out.seek(0)
+    return out
 
-    def wrap_text(text, font, max_width, draw):
-        words = text.split()
-        lines = []
-        current_line = []
-        for word in words:
-            test_line = ' '.join(current_line + [word])
-            bbox = draw.textbbox((0, 0), test_line, font=font)
-            width = bbox[2] - bbox[0]
-            if width <= max_width:
-                current_line.append(word)
-            else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                current_line = [word]
-        if current_line:
-            lines.append(' '.join(current_line))
-        return lines if lines else [text]
 
-    def draw_text_with_outline(draw, position, text, font, fill_color, outline_color=(0, 0, 0), outline_width=2):
-        x, y = position
-        for adj in range(-outline_width, outline_width + 1):
-            for adj2 in range(-outline_width, outline_width + 1):
-                if adj != 0 or adj2 != 0:
-                    draw.text((x + adj, y + adj2), text, font=font, fill=outline_color)
-        draw.text(position, text, font=font, fill=fill_color)
-
-    frames = []
-    durations = []
-    try:
-        frame_count = 0
-        while True:
-            gif.seek(frame_count)
-            frame = gif.copy()
-            if frame.mode != 'RGB':
-                frame = frame.convert('RGB')
-            meme_frame = frame.copy()
-            draw = ImageDraw.Draw(meme_frame)
-            if top_text:
-                max_text_width = img_width - 40
-                top_lines = wrap_text(top_text, font, max_text_width, draw)
-                y_offset = 20
-                for line in top_lines:
-                    bbox = draw.textbbox((0, 0), line, font=font)
-                    text_width = bbox[2] - bbox[0]
-                    x = (img_width - text_width) // 2
-                    draw_text_with_outline(draw, (x, y_offset), line, font, text_color)
-                    y_offset += int(font_size * 1.3)
-            if bottom_text:
-                max_text_width = img_width - 40
-                bottom_lines = wrap_text(bottom_text, font, max_text_width, draw)
-                total_bottom_height = len(bottom_lines) * int(font_size * 1.3)
-                y_offset = img_height - total_bottom_height - 20
-                for line in bottom_lines:
-                    bbox = draw.textbbox((0, 0), line, font=font)
-                    text_width = bbox[2] - bbox[0]
-                    x = (img_width - text_width) // 2
-                    draw_text_with_outline(draw, (x, y_offset), line, font, text_color)
-                    y_offset += int(font_size * 1.3)
-            bbox = draw.textbbox((0, 0), watermark_text, font=watermark_font)
-            watermark_width = bbox[2] - bbox[0]
-            watermark_height = bbox[3] - bbox[1]
-            watermark_img = Image.new('RGBA', (watermark_width + 10, watermark_height + 5), (0, 0, 0, 0))
-            watermark_draw = ImageDraw.Draw(watermark_img)
-            watermark_draw.text((5, 0), watermark_text, fill=(255, 255, 255, 128), font=watermark_font)
-            offset = 15
-            corners = [
-                (offset, offset),
-                (img_width - watermark_width - offset, offset),
-                (offset, img_height - watermark_height - offset),
-                (img_width - watermark_width - offset, img_height - watermark_height - offset),
-            ]
-            watermark_x, watermark_y = random.choice(corners)
-            meme_rgba = meme_frame.convert('RGBA')
-            meme_rgba.paste(watermark_img, (watermark_x, watermark_y), watermark_img)
-            meme_frame = meme_rgba.convert('RGB')
-            frames.append(meme_frame)
-            try:
-                duration = frame.info.get('duration', gif.info.get('duration', 100))
-                durations.append(duration)
-            except:
-                durations.append(100)
-            frame_count += 1
-            try:
-                gif.seek(frame_count)
-            except EOFError:
-                break
-    except Exception as e:
-        logger.error(f"Ошибка при обработке GIF: {e}")
-        if frames:
-            output = io.BytesIO()
-            frames[0].save(output, format='JPEG', quality=95)
-            output.seek(0)
-            return output
-        else:
-            return create_classic_meme(photo_bytes, top_text, bottom_text, font_file)
-
-    output = io.BytesIO()
-    if frames:
-        frames[0].save(
-            output,
-            format='GIF',
-            save_all=True,
-            append_images=frames[1:],
-            duration=durations,
-            loop=0,
-            optimize=False
-        )
-    output.seek(0)
-    return output
-
-def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str, 
-                      font_size: dict = None, font_file: str = "Roboto_Bold.ttf", 
+# === ДЕМОТИВАТОР (с адаптивной обводкой и водяным знаком) ===
+def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str,
+                      font_size: dict = None, font_file: str = "Roboto_Bold.ttf",
                       demotivator_type: str = "type_normal", font_color: str = "white",
                       border_thickness: int = 10, bg_color: tuple = (0, 0, 0)) -> io.BytesIO:
     if font_size is None:
         font_size = {"top": 40, "bottom": 28}
-    top_font_size = font_size.get("top", 40)
-    bottom_font_size = font_size.get("bottom", 28)
+    top_fs, bottom_fs = font_size["top"], font_size["bottom"]
+
     color_map = {
-        "red": (255, 0, 0),
-        "white": (255, 255, 255),
-        "yellow": (255, 255, 0),
-        "orange": (255, 165, 0),
-        "blue": (0, 0, 255),
-        "green": (0, 255, 0),
-        "purple": (128, 0, 128),
-        "brown": (165, 42, 42),
-        "black": (0, 0, 0),
-        "gray": (128, 128, 128),
-        "pink": (255, 192, 203),
+        "red": (255,0,0), "white": (255,255,255), "yellow": (255,255,0), "orange": (255,165,0),
+        "blue": (0,0,255), "green": (0,255,0), "purple": (128,0,128), "brown": (165,42,42),
+        "black": (0,0,0), "gray": (128,128,128), "pink": (255,192,203),
     }
-    text_color = color_map.get(font_color, (255, 255, 255))
-    photo_bytes.seek(0)
-    image = Image.open(photo_bytes)
-    if getattr(image, 'is_animated', False):
-        try:
-            image.seek(0)
-            image = image.convert('RGB')
-        except:
-            image = image.convert('RGB')
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
-    STANDARD_SIZE = 512
-    if image.size != (STANDARD_SIZE, STANDARD_SIZE):
-        image = image.resize((STANDARD_SIZE, STANDARD_SIZE), Image.Resampling.LANCZOS)
-        img_width = STANDARD_SIZE
-        img_height = STANDARD_SIZE
-    else:
-        img_width, img_height = image.size
+    text_color = color_map.get(font_color, (255,255,255))
+
+    # Адаптивные цвета
+    is_black_bg = bg_color == (0, 0, 0)
+    border_color = (255, 255, 255) if is_black_bg else (100, 100, 100)
+    watermark_color = (255, 255, 255, 180) if is_black_bg else (50, 50, 50, 180)
+
+    image = Image.open(photo_bytes).convert('RGB')
+    STANDARD = 512
+    if image.size != (STANDARD, STANDARD):
+        image = image.resize((STANDARD, STANDARD), Image.Resampling.LANCZOS)
+    w, h = STANDARD, STANDARD
+
     padding = 30
-    border_thickness = int(border_thickness or 10)
-    total_padding = padding + border_thickness
+    total_pad = padding + border_thickness
     top_space = 80 if demotivator_type == "type_normal" else 20
-    demotivator_width = img_width + (total_padding * 2)
-    demotivator_height = img_height + (total_padding * 2) + (200 if demotivator_type == "type_normal" else 120)
-    demotivator = Image.new('RGB', (demotivator_width, demotivator_height), color=bg_color)
-    photo_x = total_padding
-    photo_y = total_padding + top_space
-    demotivator.paste(image, (photo_x, photo_y))
-    draw = ImageDraw.Draw(demotivator)
-    frame_x1 = photo_x - border_thickness
-    frame_y1 = photo_y - border_thickness
-    frame_x2 = photo_x + img_width + border_thickness - 1
-    frame_y2 = photo_y + img_height + border_thickness - 1
+    dw = w + total_pad * 2
+    dh = h + total_pad * 2 + (200 if demotivator_type == "type_normal" else 120)
+
+    canvas = Image.new('RGB', (dw, dh), bg_color)
+    canvas.paste(image, (total_pad, total_pad + top_space))
+    draw = ImageDraw.Draw(canvas)
+
+    # Рамка
+    x1, y1 = total_pad - border_thickness, total_pad + top_space - border_thickness
+    x2, y2 = total_pad + w + border_thickness - 1, total_pad + h + top_space + border_thickness - 1
     for i in range(border_thickness):
-        draw.rectangle(
-            [frame_x1 - i, frame_y1 - i, frame_x2 + i, frame_y2 + i],
-            outline='white',
-            width=1
-        )
-    font_paths = [
-        os.path.join(FONT_DIR, font_file),
-        font_file,
-    ]
-    font_large = None
-    font_small = None
+        draw.rectangle([x1-i, y1-i, x2+i, y2+i], outline=border_color, width=1)
+
+    # Шрифты
+    font_paths = [os.path.join(FONT_DIR, font_file), font_file]
+    font_large = font_small = ImageFont.load_default()
     for path in font_paths:
         try:
-            font_large = ImageFont.truetype(path, top_font_size)
-            font_small = ImageFont.truetype(path, bottom_font_size)
-            logger.info(f"Шрифт загружен: {path}")
-            break
-        except Exception as e:
-            logger.warning(f"Не удалось загрузить {path}: {e}")
-            continue
-    if font_large is None:
-        logger.error(f"Шрифт {font_file} не найден, используется стандартный шрифт")
-        font_large = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-    def wrap_text(text, font, max_width):
-        words = text.split()
-        lines = []
-        current_line = []
-        for word in words:
-            test_line = ' '.join(current_line + [word])
-            bbox = draw.textbbox((0, 0), test_line, font=font)
-            width = bbox[2] - bbox[0]
-            if width <= max_width:
-                current_line.append(word)
-            else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                current_line = [word]
-        if current_line:
-            lines.append(' '.join(current_line))
-        return lines if lines else [text]
-    if demotivator_type == "type_normal" and top_text:
-        max_text_width = demotivator_width - 100
-        top_lines = wrap_text(top_text, font_large, max_text_width)
-        y_offset = 20
-        for line in top_lines:
-            bbox = draw.textbbox((0, 0), line, font=font_large)
-            text_width = bbox[2] - bbox[0]
-            x = (demotivator_width - text_width) // 2
-            draw.text((x, y_offset), line, fill=text_color, font=font_large)
-            y_offset += int(top_font_size * 1.25)
-    if bottom_text:
-        max_text_width = demotivator_width - 100
-        bottom_lines = wrap_text(bottom_text, font_small, max_text_width)
-        y_offset = photo_y + img_height + border_thickness + 30
-        for line in bottom_lines:
-            bbox = draw.textbbox((0, 0), line, font=font_small)
-            text_width = bbox[2] - bbox[0]
-            x = (demotivator_width - text_width) // 2
-            draw.text((x, y_offset), line, fill=text_color, font=font_small)
-            y_offset += int(bottom_font_size * 1.25)
-    watermark_text = "@memfy_bot"
-    watermark_size = 16
-    watermark_font_paths = [
-        os.path.join(FONT_DIR, "Roboto_Bold.ttf"),
-        "Roboto_Bold.ttf",
-    ]
-    watermark_font = None
-    for path in watermark_font_paths:
-        try:
-            watermark_font = ImageFont.truetype(path, watermark_size)
+            font_large = ImageFont.truetype(path, top_fs)
+            font_small = ImageFont.truetype(path, bottom_fs)
             break
         except:
             continue
-    if watermark_font is None:
-        watermark_font = ImageFont.load_default()
-    bbox = draw.textbbox((0, 0), watermark_text, font=watermark_font)
-    watermark_width = bbox[2] - bbox[0]
-    watermark_height = bbox[3] - bbox[1]
-    watermark_img = Image.new('RGBA', (watermark_width + 10, watermark_height + 5), (0, 0, 0, 0))
-    watermark_draw = ImageDraw.Draw(watermark_img)
-    watermark_draw.text((5, 0), watermark_text, fill=(255, 255, 255, 128), font=watermark_font)
-    offset = 15
-    corners = [
-        (offset, offset),
-        (demotivator_width - watermark_width - offset, offset),
-        (offset, demotivator_height - watermark_height - offset),
-        (demotivator_width - watermark_width - offset, demotivator_height - watermark_height - offset),
-    ]
-    watermark_x, watermark_y = random.choice(corners)
-    demotivator_rgba = demotivator.convert('RGBA')
-    demotivator_rgba.paste(watermark_img, (watermark_x, watermark_y), watermark_img)
-    demotivator = demotivator_rgba.convert('RGB')
-    output = io.BytesIO()
-    demotivator.save(output, format='JPEG', quality=95)
-    output.seek(0)
-    return output
 
-def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.BytesIO:
-    photo_bytes.seek(0)
-    im = Image.open(photo_bytes)
-    if im.mode != 'RGB':
-        im = im.convert('RGB')
-    if intensity == 'mild':
-        downscale = 0.8
-        poster_bits = 6
-        jpeg_quality = 50
-    elif intensity == 'light':
-        downscale = 0.6
-        poster_bits = 5
-        jpeg_quality = 35
-    elif intensity == 'medium':
-        downscale = 0.35
-        poster_bits = 4
-        jpeg_quality = 20
-    elif intensity == 'hard':
-        downscale = 0.14
-        poster_bits = 3
-        jpeg_quality = 8
-    elif intensity == 'extreme':
-        downscale = 0.05
-        poster_bits = 2
-        jpeg_quality = 5
-    else:
-        downscale = 0.14
-        poster_bits = 3
-        jpeg_quality = 8
-    w, h = im.size
-    new_w = max(2, int(w * downscale))
-    new_h = max(2, int(h * downscale))
-    im_small = im.resize((new_w, new_h), resample=Image.Resampling.NEAREST)
-    im_pixel = im_small.resize((w, h), resample=Image.Resampling.NEAREST)
-    im_poster = ImageOps.posterize(im_pixel, poster_bits)
-    im_blur = im_poster.filter(ImageFilter.GaussianBlur(radius=1))
-    im_enh = ImageOps.autocontrast(im_blur, cutoff=0)
+    def wrap(text, font, max_w):
+        words = text.split()
+        lines = []
+        line = []
+        for word in words:
+            test = ' '.join(line + [word])
+            if draw.textbbox((0,0), test, font=font)[2] <= max_w:
+                line.append(word)
+            else:
+                lines.append(' '.join(line))
+                line = [word]
+        if line:
+            lines.append(' '.join(line))
+        return lines
+
+    # Текст
+    if top_text and demotivator_type == "type_normal":
+        lines = wrap(top_text, font_large, dw - 100)
+        y = 20
+        for line in lines:
+            tw = draw.textbbox((0,0), line, font=font_large)[2]
+            draw.text(((dw - tw) // 2, y), line, fill=text_color, font=font_large)
+            y += int(top_fs * 1.25)
+
+    if bottom_text:
+        lines = wrap(bottom_text, font_small, dw - 100)
+        y = total_pad + h + top_space + border_thickness + 30
+        for line in lines:
+            tw = draw.textbbox((0,0), line, font=font_small)[2]
+            draw.text(((dw - tw) // 2, y), line, fill=text_color, font=font_small)
+            y += int(bottom_fs * 1.25)
+
+    # Водяной знак
+    wm_text = "@memfy_bot"
+    wm_font = ImageFont.truetype(os.path.join(FONT_DIR, "Roboto_Bold.ttf"), 16) if os.path.exists(os.path.join(FONT_DIR, "Roboto_Bold.ttf")) else ImageFont.load_default()
+    tw, th = draw.textbbox((0,0), wm_text, font=wm_font)[2:]
+    wm_img = Image.new('RGBA', (tw + 10, th + 5), (0,0,0,0))
+    wm_draw = ImageDraw.Draw(wm_img)
+    wm_draw.text((5,0), wm_text, fill=watermark_color, font=wm_font)
+    corners = [(15,15), (dw-tw-25,15), (15,dh-th-25), (dw-tw-25,dh-th-25)]
+    canvas.paste(wm_img, random.choice(corners), wm_img)
+
     out = io.BytesIO()
-    im_enh.save(out, format='JPEG', quality=jpeg_quality, optimize=False)
+    canvas.save(out, format='JPEG', quality=95)
     out.seek(0)
-    final = Image.open(out)
-    final = final.convert('P', palette=Image.ADAPTIVE, colors=64).convert('RGB')
+    return out
+
+
+# === ШАКАЛИЗАЦИЯ (без глитча) ===
+def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.BytesIO:
+    im = Image.open(photo_bytes).convert('RGB')
+    levels = {
+        'mild': (0.8, 6, 50), 'light': (0.6, 5, 35), 'medium': (0.35, 4, 20),
+        'hard': (0.14, 3, 8), 'extreme': (0.05, 2, 5),
+    }
+    down, bits, qual = levels.get(intensity, levels['hard'])
+    w, h = im.size
+    nw, nh = max(2, int(w * down)), max(2, int(h * down))
+    small = im.resize((nw, nh), Image.Resampling.NEAREST)
+    pixel = small.resize((w, h), Image.Resampling.NEAREST)
+    poster = ImageOps.posterize(pixel, bits)
+    blur = poster.filter(ImageFilter.GaussianBlur(1))
+    final = ImageOps.autocontrast(blur)
+    out = io.BytesIO()
+    final.save(out, format='JPEG', quality=qual)
+    final = Image.open(out).convert('P', palette=Image.ADAPTIVE, colors=64).convert('RGB')
     final_out = io.BytesIO()
-    final.save(final_out, format='JPEG', quality=max(2, jpeg_quality), optimize=False)
+    final.save(final_out, format='JPEG', quality=max(2, qual))
     final_out.seek(0)
     return final_out
 
+
+# === ДОБАВИТЬ ТЕКСТ К GIF ===
+def add_text_to_gif(gif_bytes: io.BytesIO, text: str, options: dict = None) -> io.BytesIO:
+    if options is None:
+        options = {}
+    font_name = options.get('font', 'Impact.ttf')
+    color = options.get('color', 'white')
+    position = options.get('position', 'bottom')
+    animate = options.get('animate', 'none')
+
+    # Цвета
+    color_map = {
+        "red": (255,0,0), "white": (255,255,255), "yellow": (255,255,0), "orange": (255,165,0),
+        "blue": (0,0,255), "green": (0,255,0), "purple": (128,0,128), "brown": (165,42,42),
+        "black": (0,0,0), "gray": (128,128,128), "pink": (255,192,203),
+    }
+    text_color = color_map.get(color, (255,255,255))
+
+    # Загрузка GIF
+    gif = Image.open(gif_bytes)
+    frames = []
+    durations = []
+
+    try:
+        while True:
+            frame = gif.convert('RGBA')
+            frames.append(frame)
+            durations.append(gif.info.get('duration', 100))
+            gif.seek(gif.tell() + 1)
+    except EOFError:
+        pass
+
+    # Шрифт
+    font_paths = [os.path.join(FONT_DIR, font_name), font_name]
+    font = ImageFont.load_default()
+    for path in font_paths:
+        try:
+            font = ImageFont.truetype(path, 40)
+            break
+        except:
+            continue
+
+    # Обработка кадров
+    processed_frames = []
+    for i, frame in enumerate(frames):
+        draw = ImageDraw.Draw(frame)
+        w, h = frame.size
+
+        # Позиция
+        if position == 'top':
+            y = 10
+        elif position == 'center':
+            y = h // 2 - 20
+        else:  # bottom
+            y = h - 60
+
+        # Анимация
+        if animate == 'fade':
+            alpha = int(255 * (i / len(frames)))
+            text_color_with_alpha = text_color + (alpha,)
+        else:
+            text_color_with_alpha = text_color
+
+        # Текст
+        tw, th = draw.textbbox((0,0), text, font=font)[2:]
+        draw.text(((w - tw) // 2, y), text, fill=text_color_with_alpha, font=font)
+
+        # Водяной знак
+        wm_text = "@memfy_bot"
+        wm_font = ImageFont.truetype(os.path.join(FONT_DIR, "Roboto_Bold.ttf"), 16) if os.path.exists(os.path.join(FONT_DIR, "Roboto_Bold.ttf")) else ImageFont.load_default()
+        tw_wm, th_wm = draw.textbbox((0,0), wm_text, font=wm_font)[2:]
+        wm_img = Image.new('RGBA', (tw_wm + 10, th_wm + 5), (0,0,0,0))
+        wm_draw = ImageDraw.Draw(wm_img)
+        wm_draw.text((5,0), wm_text, fill=(255,255,255,128), font=wm_font)
+        frame.paste(wm_img, (10, 10), wm_img)
+
+        processed_frames.append(frame)
+
+    # Сохранение GIF
+    out = io.BytesIO()
+    processed_frames[0].save(out, format='GIF', save_all=True, append_images=processed_frames[1:], duration=durations, loop=0)
+    out.seek(0)
+    return out
+
+
+# === ДОБАВИТЬ ТЕКСТ К ВИДЕО ===
+def add_text_to_video(video_bytes: io.BytesIO, text: str, options: dict = None) -> io.BytesIO:
+    if options is None:
+        options = {}
+    font_name = options.get('font', 'Impact.ttf')
+    color = options.get('color', 'white')
+    position = options.get('position', 'bottom')
+    animate = options.get('animate', 'none')
+
+    # Цвета
+    color_map = {
+        "red": (255,0,0), "white": (255,255,255), "yellow": (255,255,0), "orange": (255,165,0),
+        "blue": (0,0,255), "green": (0,255,0), "purple": (128,0,128), "brown": (165,42,42),
+        "black": (0,0,0), "gray": (128,128,128), "pink": (255,192,203),
+    }
+    text_color = color_map.get(color, (255,255,255))
+
+    # Сохранить видео во временный файл
+    temp_video = 'temp_video.mp4'
+    with open(temp_video, 'wb') as f:
+        f.write(video_bytes.getvalue())
+
+    # Загрузка видео
+    clip = mp.VideoFileClip(temp_video)
+
+    # Функция для добавления текста
+    def add_text_frame(frame):
+        img = Image.fromarray(frame)
+        draw = ImageDraw.Draw(img)
+        w, h = img.size
+
+        # Шрифт
+        font_paths = [os.path.join(FONT_DIR, font_name), font_name]
+        font = ImageFont.load_default()
+        for path in font_paths:
+            try:
+                font = ImageFont.truetype(path, 40)
+                break
+            except:
+                continue
+
+        # Позиция
+        if position == 'top':
+            y = 10
+        elif position == 'center':
+            y = h // 2 - 20
+        else:  # bottom
+            y = h - 60
+
+        # Анимация (простая fade)
+        if animate == 'fade':
+            t = clip.duration
+            alpha = 255  # Для простоты, без fade по времени
+        else:
+            alpha = 255
+
+        text_color_with_alpha = text_color + (alpha,) if alpha < 255 else text_color
+
+        # Текст
+        tw, th = draw.textbbox((0,0), text, font=font)[2:]
+        draw.text(((w - tw) // 2, y), text, fill=text_color_with_alpha, font=font)
+
+        # Водяной знак
+        wm_text = "@memfy_bot"
+        wm_font = ImageFont.truetype(os.path.join(FONT_DIR, "Roboto_Bold.ttf"), 16) if os.path.exists(os.path.join(FONT_DIR, "Roboto_Bold.ttf")) else ImageFont.load_default()
+        tw_wm, th_wm = draw.textbbox((0,0), wm_text, font=wm_font)[2:]
+        wm_img = Image.new('RGBA', (tw_wm + 10, th_wm + 5), (0,0,0,0))
+        wm_draw = ImageDraw.Draw(wm_img)
+        wm_draw.text((5,0), wm_text, fill=(255,255,255,128), font=wm_font)
+        img.paste(wm_img, (10, 10), wm_img)
+
+        return np.array(img)
+
+    # Применить функцию к каждому кадру
+    video_with_text = clip.fl_image(add_text_frame)
+
+    # Сохранить в BytesIO
+    out = io.BytesIO()
+    temp_output = 'temp_output.mp4'
+    video_with_text.write_videofile(temp_output, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None)
+    with open(temp_output, 'rb') as f:
+        out.write(f.read())
+    out.seek(0)
+
+    # Очистка
+    os.remove(temp_video)
+    os.remove(temp_output)
+
+    return out
+
+
+# === КОМАНДЫ ДЛЯ GIF И ВИДЕО ===
+async def gif_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    args = context.args
+    if not args:
+        await update.message.reply_text("Использование: /gif_text \"Текст\" --font Arial --color red --position bottom --animate fade")
+        return
+    text = args[0]
+    options = parse_options(args[1:])
+    user_data[user_id] = {'gif_text': text, 'options': options}
+    await update.message.reply_text("Отправь GIF для добавления текста.")
+
+async def video_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not VIDEO_SUPPORT:
+        await update.message.reply_text("Видео-функции отключены из-за отсутствия зависимостей.")
+        return
+    user_id = update.effective_user.id
+    args = context.args
+    if not args:
+        await update.message.reply_text("Использование: /video_text \"Текст\" --font Arial --color red --position bottom --animate fade")
+        return
+    text = args[0]
+    options = parse_options(args[1:])
+    user_data[user_id] = {'video_text': text, 'options': options}
+    await update.message.reply_text("Отправь видео для добавления текста.")
+
+def parse_options(args):
+    options = {}
+    i = 0
+    while i < len(args):
+        if args[i].startswith('--'):
+            key = args[i][2:]
+            if i + 1 < len(args) and not args[i+1].startswith('--'):
+                options[key] = args[i+1]
+                i += 2
+            else:
+                options[key] = True
+                i += 1
+        else:
+            i += 1
+    return options
+
+# === ЗАПУСК ===
 def main():
-    """Запуск бота"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
-        print("Ошибка: Установите переменную окружения TELEGRAM_BOT_TOKEN")
+        print("Ошибка: Установите TELEGRAM_BOT_TOKEN")
         return
-
-    # Проверим доступность шрифтов перед стартом
     check_fonts_presence()
-
-    application = Application.builder().token(token).job_queue(None).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("size", size_command))
-    application.add_handler(CallbackQueryHandler(button_callback))
-    application.add_handler(MessageHandler(filters.PHOTO | filters.ANIMATION, handle_photo))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    print("Бот запущен!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    app = Application.builder().token(token).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("size", size_command))
+    app.add_handler(CommandHandler("gif_text", gif_text_command))
+    app.add_handler(CommandHandler("video_text", video_text_command))
+    app.add_handler(CallbackQueryHandler(button_callback))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.ANIMATION, handle_photo))
+    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    print("Бот запущен...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
