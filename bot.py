@@ -1,37 +1,29 @@
-﻿﻿﻿import logging
+﻿import logging
 import random
 import os
-import shlex
-import uuid
-import io
-import numpy as np
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
+import io
 
-# Попытка импортировать moviepy (в своё время у тебя уже было в requirements)
-try:
-    import moviepy.editor as mp
-    VIDEO_SUPPORT = True
-    logging.info("MoviePy загружен успешно.")
-except Exception as e:
-    VIDEO_SUPPORT = False
-    logging.warning(f"MoviePy не установлен или не доступен: {e}. Видео-функции отключены.")
-
-# Логи
+# === ЛОГИРОВАНИЕ ===
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Константы и кэш
-FONT_DIR = os.path.dirname(__file__)
-font_cache = {}
+# === ШРИФТЫ В ТОЙ ЖЕ ПАПКЕ, ЧТО И bot.py ===
+FONT_DIR = os.path.dirname(__file__)  # ← шрифты рядом с bot.py
 
+# === ХРАНИЛИЩЕ ===
 user_data = {}
 user_messages = {}
 
+# === ДОНАТ ===
+DONATION_URL = "https://dalink.to/ev1lbr1tan"
+
+# === СПИСОК ШРИФТОВ (должны быть в той же папке) ===
 AVAILABLE_FONT_FILES = [
     "Molodost.ttf",
     "Roboto_Bold.ttf",
@@ -48,6 +40,7 @@ AVAILABLE_FONT_FILES = [
 
 
 def check_fonts_presence():
+    """Проверка наличия шрифтов в папке с bot.py"""
     logger.info(f"Проверка шрифтов в: {FONT_DIR}")
     for fname in AVAILABLE_FONT_FILES:
         path = os.path.join(FONT_DIR, fname)
@@ -57,30 +50,57 @@ def check_fonts_presence():
             logger.warning(f"Шрифт НЕ найден: {fname} (ищется: {path})")
 
 
+def get_donation_keyboard():
+    """Кнопка 'Донат'"""
+    keyboard = [[InlineKeyboardButton("Донат", url=DONATION_URL)]]
+    return InlineKeyboardMarkup(keyboard)
+
+
 # === /start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.message.chat.type if update.message else 'private'
+    reply_markup = get_donation_keyboard()
+
     if chat_type in ['group', 'supergroup']:
         await update.message.reply_text(
-            "Прикрепи фото/GIF, и посмотри что получится!:)\n\n"
+            "Прикрепи фото, и посмотри что получиться!:)\n\n"
             "В группе:\n"
-            "1. Отправь фото или анимацию с подписью: @memfy_bot\n"
+            "1. Отправь фото с подписью: @memfy_bot\n"
             "2. Выбери тип\n"
-            "3. Отправь текст: 'Верхний|Нижний'"
+            "3. Отправь текст: 'Верхний|Нижний'",
+            reply_markup=reply_markup
         )
     else:
         await update.message.reply_text(
-            "Прикрепи фото или GIF, и посмотри что получится!:)\n\n"
+            "Прикрепи фото, и посмотри что получиться!:)\n\n"
             "Как пользоваться:\n"
-            "1. Отправь фото или анимацию\n"
+            "1. Отправь фото\n"
             "2. Выбери тип: мем или демотиватор\n"
             "3. Настрой шрифт, размер, цвет, фон, рамку\n"
             "4. Отправь текст: 'Верхний|Нижний'\n\n"
-            "Или используй /gif_text или /video_text для быстрого добавления текста."
+            "Или просто фото + подпись с текстом.\n"
+            "Работает в личке и группах!",
+            reply_markup=reply_markup
         )
 
 
-# === Кнопки / callback ===
+# === /size (для демотиваторов) ===
+async def size_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("Маленький", callback_data="size_small"),
+         InlineKeyboardButton("Средний", callback_data="size doubtless")],
+        [InlineKeyboardButton("Большой", callback_data="size_large"),
+         InlineKeyboardButton("Очень большой", callback_data="size_xlarge")],
+        [InlineKeyboardButton("Назад", callback_data="action_back"),
+         InlineKeyboardButton("Отмена", callback_data="action_cancel")],
+    ]
+    await update.message.reply_text(
+        "Выбери размер шрифта:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+# === КНОПКИ ===
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -89,7 +109,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_data:
         user_data[user_id] = {}
 
-    # Cancel
+    # === ОТМЕНА ===
     if query.data == "action_cancel":
         if user_id in user_messages:
             for msg_id in list(user_messages[user_id]):
@@ -102,10 +122,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Генерация отменена. Прикрепи новое фото! :)")
         return
 
-    # Back
+    # === НАЗАД ===
     if query.data == "action_back":
         ud = user_data.get(user_id, {})
-        # restore steps similar to your original logic
         if 'font_file' in ud and ud.get('meme_type') == 'meme_demotivator':
             ud.pop('font_file', None)
             await query.edit_message_text("Выбери шрифт:", reply_markup=show_font_selection(user_id))
@@ -139,7 +158,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Нечего возвращать.")
         return
 
-    # Size selection
+    # === РАЗМЕР ШРИФТА ===
     size_map = {
         "size_small": {"top": 30, "bottom": 20},
         "size_medium": {"top": 40, "bottom": 28},
@@ -163,7 +182,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Colors
+    # === ЦВЕТ ТЕКСТА ===
     color_map = {
         "color_red": "red", "color_white": "white", "color_yellow": "yellow", "color_orange": "orange",
         "color_blue": "blue", "color_green": "green", "color_purple": "purple", "color_brown": "brown",
@@ -201,7 +220,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # Background for demotivator
+    # === ФОН ===
     bg_map = {
         "bg_black": (0, 0, 0), "bg_white": (255, 255, 255), "bg_dark_gray": (50, 50, 50),
         "bg_light_gray": (200, 200, 200), "bg_blue": (0, 0, 139), "bg_green": (0, 100, 0),
@@ -223,7 +242,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Border thickness
+    # === РАМКА ===
     thickness_map = {"thickness_thin": 4, "thickness_normal": 10, "thickness_thick": 20, "thickness_xthick": 30}
     if query.data in thickness_map:
         user_data[user_id]['border_thickness'] = thickness_map[query.data]
@@ -236,7 +255,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Font selection (demotivator)
+    # === ШРИФТЫ ===
     font_map = {
         "font_molodost": "Molodost.ttf", "font_roboto": "Roboto_Bold.ttf",
         "font_times": "Times New Roman Bold Italic.ttf", "font_nougat": "Nougat Regular.ttf",
@@ -259,7 +278,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Meme type
+    # === ТИП МЕМА ===
     if query.data in ["meme_classic", "meme_demotivator"]:
         user_data[user_id]['meme_type'] = query.data
         if user_id not in user_messages:
@@ -275,10 +294,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             await query.edit_message_text("Выбран: **Классический мем**\n\nШрифт:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         else:
-            await query.edit_message_text("Выбран: **Демотиватор**\n\nШрифт:", reply_markup=show_font_selection(user_id))
+            await query.edit_message_text("Выбран: **Демотиватор**\n\nШрифт:", parse_mode='Markdown', reply_markup=show_font_selection(user_id))
         return
 
-    # Classic font options
+    # === КЛАССИЧЕСКИЙ ШРИФТ ===
     if query.data in ["classic_font_impact", "classic_font_lobster"]:
         fmap = {"classic_font_impact": "Impact.ttf", "classic_font_lobster": "Lobster.ttf"}
         user_data[user_id]['classic_font'] = fmap[query.data]
@@ -291,18 +310,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"Шрифт: **{query.data.split('_')[-1].capitalize()}**\n\nТип:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Classic type
+    # === ТИП КЛАССИЧЕСКОГО ===
     if query.data in ["classic_type_normal", "classic_type_bottom_only"]:
         user_data[user_id]['classic_type'] = query.data
         if 'caption_top' in user_data[user_id]:
-            # логика в handle_text
-            pass
+            # Обработка с подписью
+            pass  # (логика в handle_text)
         else:
             instr = "Текст: 'Верхний|Нижний'" if query.data == "classic_type_normal" else "Текст (только снизу)"
             await query.edit_message_text(f"Тип: **{'Верх+низ' if 'normal' in query.data else 'Только низ'}**\n\n{instr}", parse_mode='Markdown')
         return
 
-    # Demotivator type
+    # === ТИП ДЕМОТИВАТОРА ===
     if query.data in ["type_normal", "type_bottom_only"]:
         user_data[user_id]['demotivator_type'] = query.data
         keyboard = [
@@ -316,7 +335,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Тип: **{'Обычный' if 'normal' in query.data else 'Только снизу'}**\n\nРазмер:", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Shakalize
+    # === ШАКАЛИЗАЦИЯ ===
     if query.data == "shakalize_menu":
         keyboard = [
             [InlineKeyboardButton("Мягкая", callback_data="shakalize_mild"),
@@ -342,7 +361,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             photo_bytes = user_data[user_id]['photo']
             photo_bytes.seek(0)
             result = shakalize_image(photo_bytes, intensity=level)
-            await query.message.reply_photo(photo=result, caption="Зашакалил!")
+            await query.message.reply_photo(photo=result, caption="Зашакалил!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
             if user_id in user_messages:
                 for msg_id in user_messages[user_id]:
                     try:
@@ -375,7 +394,7 @@ def show_font_selection(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
-# === ОБРАБОТКА ФОТО/ANIMATION/DOCUMENT ===
+# === ОБРАБОТКА ФОТО ===
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_type = update.message.chat.type
@@ -384,130 +403,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.animation:
         file = await context.bot.get_file(update.message.animation.file_id)
         is_gif = True
-        media_type = 'gif'
-    elif update.message.document and update.message.document.mime_type in ['image/gif', 'video/mp4']:
-        file = await context.bot.get_file(update.message.document.file_id)
-        is_gif = True
-        media_type = 'gif'
-    elif update.message.video and update.message.video.mime_type == 'video/mp4':
-        file = await context.bot.get_file(update.message.video.file_id)
-        is_gif = True
-        media_type = 'gif'
     else:
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         is_gif = False
-        media_type = 'photo'
 
     photo_bytes = io.BytesIO()
-    file_size = file.file_size or 0
-    # скачиваем
-    if file_size > 50 * 1024 * 1024:
-        # Для больших файлов - на диск временно
-        temp_path = f"temp_{uuid.uuid4()}.tmp"
-        try:
-            await file.download_to_drive(temp_path)
-            with open(temp_path, 'rb') as f:
-                photo_bytes.write(f.read())
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-    else:
-        await file.download_to_memory(photo_bytes)
+    await file.download_to_memory(photo_bytes)
     photo_bytes.seek(0)
-
-    # Проверка (только фото)
-    if not is_gif and photo_bytes.tell() > 50 * 1024 * 1024:
-        await update.message.reply_text("Файл слишком большой (макс 50MB).")
-        return
-
-    caption = (update.message.caption or "").strip()
-    bot_username = context.bot.username.lower()
-
-    # В группе: проверка упоминания
-    if chat_type in ['group', 'supergroup']:
-        mentioned = False
-        if caption and f"@memfy_bot" in caption.lower():
-            mentioned = True
-        elif update.message.caption_entities:
-            for e in update.message.caption_entities:
-                if e.type == "mention":
-                    mention = caption[e.offset:e.offset+e.length].lower()
-                    if mention in [f"@memfy_bot", f"@{bot_username}"]:
-                        mentioned = True
-                        break
-        if not mentioned:
-            return
-        caption = caption.replace(f"@{bot_username}", "").replace("@memfy_bot", "").strip()
-
-    if user_id not in user_data:
-        user_data[user_id] = {}
-    user_data[user_id]['photo'] = photo_bytes
-    user_data[user_id]['is_gif'] = is_gif
-    user_data[user_id]['media_type'] = media_type
-
-    if caption and '|' in caption:
-        texts = caption.split('|', 1)
-        user_data[user_id]['caption_top'] = texts[0].strip()
-        user_data[user_id]['caption_bottom'] = texts[1].strip() if len(texts) > 1 else ""
-
-    # Обработка GIF с текстом (если была команда /gif_text)
-    if is_gif and 'gif_text' in user_data[user_id]:
-        text = user_data[user_id]['gif_text']
-        options = user_data[user_id].get('options', {})
-        try:
-            # Определяем, mp4 ли на самом деле (ftyp в сигнатуре)
-            head = photo_bytes.getvalue()[:12]
-            is_mp4 = (len(head) >= 8 and head[4:8] == b'ftyp')
-            if is_mp4:
-                # используем обработку видео
-                result = add_text_to_video(photo_bytes, text, options)
-                await update.message.reply_video(video=result, caption="GIF (MP4) с текстом готов!\n\n@memfy_bot")
-            else:
-                result = add_text_to_gif(photo_bytes, text, options)
-                await update.message.reply_animation(animation=result, caption="GIF с текстом готов!\n\n@memfy_bot")
-            # очистка
-            user_data[user_id].pop('gif_text', None)
-            user_data[user_id].pop('options', None)
-            user_data[user_id].pop('photo', None)
-            return
-        except Exception as e:
-            logger.error(f"Ошибка GIF: {e}")
-            await update.message.reply_text("Ошибка обработки GIF/видео. Проверьте формат файла.")
-            return
-
-    # UI: показать кнопки (как раньше)
-    if user_id not in user_messages:
-        user_messages[user_id] = []
-    user_messages[user_id].append(update.message.message_id)
-
-    keyboard = [
-        [InlineKeyboardButton("Классический мем", callback_data="meme_classic")],
-        [InlineKeyboardButton("Демотиватор", callback_data="meme_demotivator")],
-        [InlineKeyboardButton("Зашакалить", callback_data="shakalize_menu")],
-    ]
-    sent = await update.message.reply_text(
-        "Фото получено!\n\nВыбери действие:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    user_messages[user_id].append(sent.message_id)
-
-
-# === ОБРАБОТКА ВИДЕО (для /video_text) ===
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    chat_type = update.message.chat.type
-
-    video = update.message.video
-    file = await context.bot.get_file(video.file_id)
-    video_bytes = io.BytesIO()
-    await file.download_to_memory(video_bytes)
-    video_bytes.seek(0)
-
-    # Проверка размера
-    if len(video_bytes.getvalue()) > 50 * 1024 * 1024:
-        await update.message.reply_text("Файл слишком большой (макс 50MB).")
-        return
 
     caption = (update.message.caption or "").strip()
     bot_username = context.bot.username.lower()
@@ -530,30 +433,36 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_id not in user_data:
         user_data[user_id] = {}
-    user_data[user_id]['video'] = video_bytes
+    user_data[user_id]['photo'] = photo_bytes
+    user_data[user_id]['is_gif'] = is_gif
 
-    if 'video_text' in user_data[user_id]:
-        text = user_data[user_id]['video_text']
-        options = user_data[user_id].get('options', {})
-        try:
-            result = add_text_to_video(video_bytes, text, options)
-            await update.message.reply_video(video=result, caption="Видео с текстом готово!\n\n@memfy_bot")
-            user_data[user_id].pop('video_text', None)
-            user_data[user_id].pop('options', None)
-            user_data[user_id].pop('video', None)
-        except Exception as e:
-            logger.error(f"Ошибка видео: {e}")
-            await update.message.reply_text("Ошибка обработки видео. Попробуйте другой файл или уменьшите размер.")
-    else:
-        await update.message.reply_text("Видео получено. Используй /video_text для добавления текста.")
+    if caption and '|' in caption:
+        texts = caption.split('|', 1)
+        user_data[user_id]['caption_top'] = texts[0].strip()
+        user_data[user_id]['caption_bottom'] = texts[1].strip() if len(texts) > 1 else ""
+
+    if user_id not in user_messages:
+        user_messages[user_id] = []
+    user_messages[user_id].append(update.message.message_id)
+
+    keyboard = [
+        [InlineKeyboardButton("Классический мем", callback_data="meme_classic")],
+        [InlineKeyboardButton("Демотиватор", callback_data="meme_demotivator")],
+        [InlineKeyboardButton("Зашакалить", callback_data="shakalize_menu")],
+    ]
+    sent = await update.message.reply_text(
+        "Фото получено!\n\nВыбери действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    user_messages[user_id].append(sent.message_id)
 
 
-# === ОБРАБОТКА ТЕКСТА (главная логика генерации мемов/демотиваторов) ===
+# === ОБРАБОТКА ТЕКСТА ===
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in user_data or 'photo' not in user_data[user_id]:
         if update.message.chat.type == 'private':
-            await update.message.reply_text("Сначала отправь фото или GIF.")
+            await update.message.reply_text("Сначала отправь фото.")
         return
 
     meme_type = user_data[user_id].get('meme_type')
@@ -590,19 +499,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             font = user_data[user_id]['classic_font']
             is_gif = user_data[user_id].get('is_gif', False)
             if is_gif:
-                text_combined = f"{top}|{bottom}" if top and bottom else (top or bottom)
-                # Если это mp4 внутри — add_text_to_gif решит перенаправить/или проверяем ниже
-                head = photo_bytes.getvalue()[:12]
-                is_mp4 = (len(head) >= 8 and head[4:8] == b'ftyp')
-                if is_mp4:
-                    result = add_text_to_video(photo_bytes, text_combined, {'font': font})
-                    await update.message.reply_video(video=result, caption="Готово!\n\n@memfy_bot")
-                else:
-                    meme = add_text_to_gif(photo_bytes, text_combined, {'font': font})
-                    await update.message.reply_animation(animation=meme, caption="Готово!\n\n@memfy_bot")
+                meme = create_classic_meme_gif(photo_bytes, top, bottom, font)
+                await update.message.reply_animation(animation=meme, caption="Готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
             else:
                 meme = create_classic_meme(photo_bytes, top, bottom, font)
-                await update.message.reply_photo(photo=meme, caption="Готово!\n\n@memfy_bot")
+                await update.message.reply_photo(photo=meme, caption="Готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
 
         else:  # демотиватор
             if 'font_file' not in user_data[user_id]:
@@ -634,18 +535,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 border_thickness=user_data[user_id].get('border_thickness', 10),
                 bg_color=user_data[user_id].get('bg_color', (0, 0, 0))
             )
-            await update.message.reply_photo(photo=demotivator, caption="Демотиватор готов!\n\n@memfy_bot")
+            await update.message.reply_photo(photo=demotivator, caption="Демотиватор готов!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
 
         # Очистка
         for key in ['photo', 'meme_type', 'classic_font', 'classic_type', 'is_gif', 'font_file', 'font_size', 'font_color', 'bg_color', 'border_thickness', 'demotivator_type']:
             user_data[user_id].pop(key, None)
 
     except Exception as e:
-        logger.error(f"Ошибка обработки: {e}")
-        await update.message.reply_text("Ошибка обработки файла. Проверьте формат файла.")
+        logger.error(f"Ошибка: {e}")
+        await update.message.reply_text("Ошибка. Попробуй снова.")
 
 
-# === CLASSIC MEM ===
+# === КЛАССИЧЕСКИЙ МЕМ ===
 def create_classic_meme(photo_bytes: io.BytesIO, top_text: str, bottom_text: str, font_file: str = "Impact.ttf") -> io.BytesIO:
     image = Image.open(photo_bytes).convert('RGB')
     w, h = image.size
@@ -700,7 +601,7 @@ def create_classic_meme(photo_bytes: io.BytesIO, top_text: str, bottom_text: str
             draw_outline(line, ((w - tw) // 2, y))
             y += int(font_size * 1.3)
 
-    # Watermark
+    # Водяной знак
     wm_text = "@memfy_bot"
     wm_font = ImageFont.truetype(os.path.join(FONT_DIR, "Roboto_Bold.ttf"), 16) if os.path.exists(os.path.join(FONT_DIR, "Roboto_Bold.ttf")) else ImageFont.load_default()
     tw, th = draw.textbbox((0,0), wm_text, font=wm_font)[2:]
@@ -716,7 +617,7 @@ def create_classic_meme(photo_bytes: io.BytesIO, top_text: str, bottom_text: str
     return out
 
 
-# === DEMOTIVATOR ===
+# === ДЕМОТИВАТОР (с адаптивной обводкой и водяным знаком) ===
 def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str,
                       font_size: dict = None, font_file: str = "Roboto_Bold.ttf",
                       demotivator_type: str = "type_normal", font_color: str = "white",
@@ -732,6 +633,7 @@ def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str,
     }
     text_color = color_map.get(font_color, (255,255,255))
 
+    # Адаптивные цвета
     is_black_bg = bg_color == (0, 0, 0)
     border_color = (255, 255, 255) if is_black_bg else (100, 100, 100)
     watermark_color = (255, 255, 255, 180) if is_black_bg else (50, 50, 50, 180)
@@ -752,13 +654,13 @@ def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str,
     canvas.paste(image, (total_pad, total_pad + top_space))
     draw = ImageDraw.Draw(canvas)
 
-    # Frame
+    # Рамка
     x1, y1 = total_pad - border_thickness, total_pad + top_space - border_thickness
     x2, y2 = total_pad + w + border_thickness - 1, total_pad + h + top_space + border_thickness - 1
     for i in range(border_thickness):
         draw.rectangle([x1-i, y1-i, x2+i, y2+i], outline=border_color, width=1)
 
-    # Fonts
+    # Шрифты
     font_paths = [os.path.join(FONT_DIR, font_file), font_file]
     font_large = font_small = ImageFont.load_default()
     for path in font_paths:
@@ -784,7 +686,7 @@ def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str,
             lines.append(' '.join(line))
         return lines
 
-    # Top text
+    # Текст
     if top_text and demotivator_type == "type_normal":
         lines = wrap(top_text, font_large, dw - 100)
         y = 20
@@ -793,7 +695,6 @@ def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str,
             draw.text(((dw - tw) // 2, y), line, fill=text_color, font=font_large)
             y += int(top_fs * 1.25)
 
-    # Bottom text
     if bottom_text:
         lines = wrap(bottom_text, font_small, dw - 100)
         y = total_pad + h + top_space + border_thickness + 30
@@ -802,7 +703,7 @@ def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str,
             draw.text(((dw - tw) // 2, y), line, fill=text_color, font=font_small)
             y += int(bottom_fs * 1.25)
 
-    # Watermark
+    # Водяной знак
     wm_text = "@memfy_bot"
     wm_font = ImageFont.truetype(os.path.join(FONT_DIR, "Roboto_Bold.ttf"), 16) if os.path.exists(os.path.join(FONT_DIR, "Roboto_Bold.ttf")) else ImageFont.load_default()
     tw, th = draw.textbbox((0,0), wm_text, font=wm_font)[2:]
@@ -818,7 +719,7 @@ def create_demotivator(photo_bytes: io.BytesIO, top_text: str, bottom_text: str,
     return out
 
 
-# === SHAKALIZE ===
+# === ШАКАЛИЗАЦИЯ (без глитча) ===
 def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.BytesIO:
     im = Image.open(photo_bytes).convert('RGB')
     levels = {
@@ -842,226 +743,7 @@ def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.Byte
     return final_out
 
 
-# === ADD TEXT TO GIF (uses Pillow) ===
-def add_text_to_gif(gif_bytes: io.BytesIO, text: str, options: dict = None) -> io.BytesIO:
-    # Если файл на самом деле MP4, перенаправляем на обработку видео
-    head = gif_bytes.getvalue()[:12]
-    if len(head) >= 8 and head[4:8] == b'ftyp':
-        return add_text_to_video(gif_bytes, text, options)
-
-    if options is None:
-        options = {}
-    font_name = options.get('font', 'Impact.ttf')
-    color = options.get('color', 'white')
-    position = options.get('position', 'bottom')
-    animate = options.get('animate', 'none')
-
-    color_map = {
-        "red": (255,0,0), "white": (255,255,255), "yellow": (255,255,0), "orange": (255,165,0),
-        "blue": (0,0,255), "green": (0,255,0), "purple": (128,0,128), "brown": (165,42,42),
-        "black": (0,0,0), "gray": (128,128,128), "pink": (255,192,203),
-    }
-    text_color = color_map.get(color, (255,255,255))
-
-    try:
-        gif = Image.open(gif_bytes)
-    except Exception as e:
-        raise ValueError(f"Ошибка открытия GIF: {e}")
-
-    frames = []
-    durations = []
-
-    try:
-        while True:
-            frame = gif.convert('RGBA')
-            frames.append(frame)
-            durations.append(gif.info.get('duration', 100))
-            gif.seek(gif.tell() + 1)
-    except EOFError:
-        pass
-
-    # Font load
-    font_key = font_name
-    if font_key not in font_cache:
-        font_paths = [os.path.join(FONT_DIR, font_name), font_name]
-        font_cache[font_key] = ImageFont.load_default()
-        for path in font_paths:
-            try:
-                font_cache[font_key] = ImageFont.truetype(path, 40)
-                break
-            except Exception as e:
-                logger.warning(f"Не удалось загрузить шрифт {path}: {e}")
-    font = font_cache[font_key]
-
-    processed_frames = []
-    for i in range(len(frames)):
-        frame = frames[i]
-        draw = ImageDraw.Draw(frame)
-        w, h = frame.size
-
-        if position == 'top':
-            y = 10
-        elif position == 'center':
-            y = h // 2 - 20
-        else:
-            y = h - 60
-
-        # Simple text draw
-        tw, th = draw.textbbox((0,0), text, font=font)[2:]
-        draw.text(((w - tw) // 2, y), text, fill=text_color, font=font)
-
-        # watermark
-        wm_text = "@memfy_bot"
-        wm_font_key = "Roboto_Bold.ttf"
-        if wm_font_key not in font_cache:
-            wm_path = os.path.join(FONT_DIR, "Roboto_Bold.ttf")
-            font_cache[wm_font_key] = ImageFont.truetype(wm_path, 16) if os.path.exists(wm_path) else ImageFont.load_default()
-        wm_font = font_cache[wm_font_key]
-        tw_wm, th_wm = draw.textbbox((0,0), wm_text, font=wm_font)[2:]
-        wm_img = Image.new('RGBA', (int(tw_wm + 10), int(th_wm + 5)), (0,0,0,0))
-        wm_draw = ImageDraw.Draw(wm_img)
-        wm_draw.text((5,0), wm_text, fill=(255,255,255,128), font=wm_font)
-        frame.paste(wm_img, (10, 10), wm_img)
-
-        processed_frames.append(frame)
-
-    out = io.BytesIO()
-    processed_frames[0].save(out, format='GIF', save_all=True, append_images=processed_frames[1:], duration=durations, loop=0)
-    out.seek(0)
-    return out
-
-
-# === ADD TEXT TO VIDEO (uses moviepy) ===
-def add_text_to_video(video_bytes: io.BytesIO, text: str, options: dict = None) -> io.BytesIO:
-    if not VIDEO_SUPPORT:
-        raise RuntimeError("Видео-функции недоступны (moviepy не установлен).")
-
-    if options is None:
-        options = {}
-    font_name = options.get('font', 'Impact.ttf')
-    color = options.get('color', 'white')
-    position = options.get('position', 'bottom')
-    animate = options.get('animate', 'none')
-
-    temp_video = f'temp_video_{uuid.uuid4()}.mp4'
-    temp_output = f'temp_output_{uuid.uuid4()}.mp4'
-    with open(temp_video, 'wb') as f:
-        f.write(video_bytes.getvalue())
-
-    try:
-        clip = mp.VideoFileClip(temp_video)
-
-        # Safe font choice for moviepy TextClip: prefer a font path if exists
-        font_path = os.path.join(FONT_DIR, font_name)
-        font_for_clip = font_path if os.path.exists(font_path) else font_name
-
-        # create text clip (moviepy)
-        txt = mp.TextClip(text, fontsize=40, color=color, font=font_for_clip).set_duration(clip.duration)
-
-        # position
-        if position == 'top':
-            txt = txt.set_position(('center', 20))
-        elif position == 'center':
-            txt = txt.set_position('center')
-        else:
-            txt = txt.set_position(('center', 'bottom'))
-
-        final = mp.CompositeVideoClip([clip, txt])
-
-        # Limit duration to 60s for safety (optional)
-        if final.duration > 60:
-            final = final.subclip(0, 60)
-
-        final.write_videofile(temp_output, codec='libx264', audio_codec='aac', fps=clip.fps or 24, verbose=False, logger=None)
-
-        out = io.BytesIO()
-        with open(temp_output, 'rb') as f:
-            out.write(f.read())
-        out.seek(0)
-        return out
-    except Exception as e:
-        logger.error(f"Ошибка обработки видео: {e}")
-        raise
-    finally:
-        for path in (temp_video, temp_output):
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except Exception:
-                pass
-
-
-# === Команды GIF/VIDEO ===
-async def gif_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    args = context.args
-    if not args:
-        await update.message.reply_text("Использование: /gif_text \"Текст\" --font Arial --color red --position bottom --animate fade")
-        return
-    text = args[0].strip()
-    if not text:
-        await update.message.reply_text("Текст не может быть пустым.")
-        return
-    options = parse_options(args[1:])
-    # Сохраняем состояние
-    user_data[user_id] = user_data.get(user_id, {})
-    user_data[user_id].update({'gif_text': text, 'options': options})
-    await update.message.reply_text("Отправь GIF или MP4-анимацию для добавления текста.")
-
-
-async def video_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not VIDEO_SUPPORT:
-        await update.message.reply_text("Видео-функции отключены из-за отсутствия зависимостей.")
-        return
-    user_id = update.effective_user.id
-    args = context.args
-    if not args:
-        await update.message.reply_text("Использование: /video_text \"Текст\" --font Arial --color red --position bottom --animate fade")
-        return
-    text = args[0].strip()
-    if not text:
-        await update.message.reply_text("Текст не может быть пустым.")
-        return
-    options = parse_options(args[1:])
-    user_data[user_id] = user_data.get(user_id, {})
-    user_data[user_id].update({'video_text': text, 'options': options})
-    await update.message.reply_text("Отправь видео для добавления текста.")
-
-
-def parse_options(args):
-    options = {}
-    try:
-        parsed = shlex.split(' '.join(args))
-        i = 0
-        while i < len(parsed):
-            if parsed[i].startswith('--'):
-                key = parsed[i][2:]
-                if i + 1 < len(parsed) and not parsed[i+1].startswith('--'):
-                    options[key] = parsed[i+1]
-                    i += 2
-                else:
-                    options[key] = True
-                    i += 1
-            else:
-                i += 1
-    except Exception:
-        # best-effort fallback
-        i = 0
-        while i < len(args):
-            if args[i].startswith('--'):
-                key = args[i][2:]
-                if i + 1 < len(args) and not args[i+1].startswith('--'):
-                    options[key] = args[i+1]
-                    i += 2
-                else:
-                    options[key] = True
-                    i += 1
-            else:
-                i += 1
-    return options
-
-
-# === Запуск приложения ===
+# === ЗАПУСК ===
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -1070,17 +752,12 @@ def main():
     check_fonts_presence()
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("size", lambda u, c: size_command(u, c) if False else None))  # placeholder if you didn't want size command here
-    app.add_handler(CommandHandler("gif_text", gif_text_command))
-    app.add_handler(CommandHandler("video_text", video_text_command))
+    app.add_handler(CommandHandler("size", size_command))
     app.add_handler(CallbackQueryHandler(button_callback))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.ANIMATION | filters.Document.IMAGE, handle_photo))
-    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.ANIMATION, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     print("Бот запущен...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
-# Если запускается как скрипт
 if __name__ == '__main__':
     main()
