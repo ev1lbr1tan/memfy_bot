@@ -474,7 +474,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         except Exception as e:
             logger.error(f"Ошибка GIF: {e}")
-            await update.message.reply_text("Ошибка обработки GIF.")
+            await update.message.reply_text("Ошибка обработки GIF. Проверьте формат файла.")
 
     if user_id not in user_messages:
         user_messages[user_id] = []
@@ -590,7 +590,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             font = user_data[user_id]['classic_font']
             is_gif = user_data[user_id].get('is_gif', False)
             if is_gif:
-                meme = create_classic_meme_gif(photo_bytes, top, bottom, font)
+                text = f"{top}|{bottom}" if top and bottom else (top or bottom)
+                meme = add_text_to_gif(photo_bytes, text, {'font': font, 'position': 'top' if top and not bottom else 'bottom'})
                 await update.message.reply_animation(animation=meme, caption="Готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
             else:
                 meme = create_classic_meme(photo_bytes, top, bottom, font)
