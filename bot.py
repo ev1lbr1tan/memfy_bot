@@ -421,15 +421,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Файл слишком большой (макс 50MB).")
         return
 
-    # Проверка формата файла
-    try:
-        test_img = Image.open(photo_bytes)
-        test_img.verify()
-        photo_bytes.seek(0)
-    except Exception as e:
-        logger.error(f"Неверный формат файла: {e}")
-        await update.message.reply_text("Неверный формат файла. Поддерживаются только изображения и GIF.")
-        return
+    # Проверка формата файла (убрана, так как вызывает проблемы с GIF)
 
     caption = (update.message.caption or "").strip()
     bot_username = context.bot.username.lower()
