@@ -421,7 +421,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Файл слишком большой (макс 50MB).")
         return
 
-    # Проверка формата файла (убрана, так как вызывает проблемы с GIF)
+    # Проверка формата файла только для GIF (убрана, так как вызывает проблемы)
 
     caption = (update.message.caption or "").strip()
     bot_username = context.bot.username.lower()
