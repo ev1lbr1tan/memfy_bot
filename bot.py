@@ -32,9 +32,6 @@ FONT_DIR = os.path.dirname(__file__)  # ← шрифты рядом с bot.py
 user_data = {}
 user_messages = {}
 
-# === ДОНАТ ===
-DONATION_URL = "https://dalink.to/ev1lbr1tan"
-
 # === СПИСОК ШРИФТОВ (должны быть в той же папке) ===
 AVAILABLE_FONT_FILES = [
     "Molodost.ttf",
@@ -62,16 +59,11 @@ def check_fonts_presence():
             logger.warning(f"Шрифт НЕ найден: {fname} (ищется: {path})")
 
 
-def get_donation_keyboard():
-    """Кнопка 'Донат'"""
-    keyboard = [[InlineKeyboardButton("Донат", url=DONATION_URL)]]
-    return InlineKeyboardMarkup(keyboard)
 
 
 # === /start ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.message.chat.type if update.message else 'private'
-    reply_markup = get_donation_keyboard()
 
     if chat_type in ['group', 'supergroup']:
         await update.message.reply_text(
@@ -79,8 +71,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "В группе:\n"
             "1. Отправь фото с подписью: @memfy_bot\n"
             "2. Выбери тип\n"
-            "3. Отправь текст: 'Верхний|Нижний'",
-            reply_markup=reply_markup
+            "3. Отправь текст: 'Верхний|Нижний'"
         )
     else:
         await update.message.reply_text(
@@ -91,8 +82,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "3. Настрой шрифт, размер, цвет, фон, рамку\n"
             "4. Отправь текст: 'Верхний|Нижний'\n\n"
             "Или просто фото + подпись с текстом.\n"
-            "Работает в личке и группах!",
-            reply_markup=reply_markup
+            "Работает в личке и группах!"
         )
 
 
@@ -373,7 +363,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             photo_bytes = user_data[user_id]['photo']
             photo_bytes.seek(0)
             result = shakalize_image(photo_bytes, intensity=level)
-            await query.message.reply_photo(photo=result, caption="Зашакалил!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+            await query.message.reply_photo(photo=result, caption="Зашакалил!")
             if user_id in user_messages:
                 for msg_id in user_messages[user_id]:
                     try:
@@ -426,8 +416,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await file.download_to_memory(photo_bytes)
     photo_bytes.seek(0)
 
-    # Проверка размера
-    if len(photo_bytes.getvalue()) > 50 * 1024 * 1024:
+    # Проверка размера (только для фото, GIF без лимита)
+    if not is_gif and len(photo_bytes.getvalue()) > 50 * 1024 * 1024:
         await update.message.reply_text("Файл слишком большой (макс 50MB).")
         return
 
@@ -467,7 +457,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         options = user_data[user_id].get('options', {})
         try:
             result = add_text_to_gif(photo_bytes, text, options)
-            await update.message.reply_animation(animation=result, caption="GIF с текстом готов!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+            await update.message.reply_animation(animation=result, caption="GIF с текстом готов!\n\n@memfy_bot")
             user_data[user_id].pop('gif_text', None)
             user_data[user_id].pop('options', None)
             user_data[user_id].pop('photo', None)
@@ -537,7 +527,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         options = user_data[user_id].get('options', {})
         try:
             result = add_text_to_video(video_bytes, text, options)
-            await update.message.reply_video(video=result, caption="Видео с текстом готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+            await update.message.reply_video(video=result, caption="Видео с текстом готово!\n\n@memfy_bot")
             user_data[user_id].pop('video_text', None)
             user_data[user_id].pop('options', None)
             user_data[user_id].pop('video', None)
@@ -592,10 +582,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if is_gif:
                 text = f"{top}|{bottom}" if top and bottom else (top or bottom)
                 meme = add_text_to_gif(photo_bytes, text, {'font': font, 'position': 'top' if top and not bottom else 'bottom'})
-                await update.message.reply_animation(animation=meme, caption="Готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+                await update.message.reply_animation(animation=meme, caption="Готово!\n\n@memfy_bot")
             else:
                 meme = create_classic_meme(photo_bytes, top, bottom, font)
-                await update.message.reply_photo(photo=meme, caption="Готово!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+                await update.message.reply_photo(photo=meme, caption="Готово!\n\n@memfy_bot")
 
         else:  # демотиватор
             if 'font_file' not in user_data[user_id]:
@@ -627,7 +617,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 border_thickness=user_data[user_id].get('border_thickness', 10),
                 bg_color=user_data[user_id].get('bg_color', (0, 0, 0))
             )
-            await update.message.reply_photo(photo=demotivator, caption="Демотиватор готов!\n\n@memfy_bot", reply_markup=get_donation_keyboard())
+            await update.message.reply_photo(photo=demotivator, caption="Демотиватор готов!\n\n@memfy_bot")
 
         # Очистка
         for key in ['photo', 'meme_type', 'classic_font', 'classic_type', 'is_gif', 'font_file', 'font_size', 'font_color', 'bg_color', 'border_thickness', 'demotivator_type']:
