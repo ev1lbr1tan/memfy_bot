@@ -1,18 +1,22 @@
 ﻿import logging
 import random
 import os
+import shlex
+import uuid
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 import io
 try:
     import moviepy.editor as mp
-    import cv2
-    import numpy as np
     VIDEO_SUPPORT = True
-except ImportError:
+    logging.info("MoviePy загружен успешно.")
+except ImportError as e:
     VIDEO_SUPPORT = False
-    logging.warning("MoviePy, OpenCV или NumPy не установлены. Видео-функции отключены.")
+    logging.warning(f"MoviePy не установлен: {e}. Видео-функции отключены.")
+
+# Кэш шрифтов для производительности
+font_cache = {}
 
 # === ЛОГИРОВАНИЕ ===
 logging.basicConfig(
@@ -96,7 +100,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def size_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("Маленький", callback_data="size_small"),
-         InlineKeyboardButton("Средний", callback_data="size doubtless")],
+         InlineKeyboardButton("Средний", callback_data="size_medium")],
         [InlineKeyboardButton("Большой", callback_data="size_large"),
          InlineKeyboardButton("Очень большой", callback_data="size_xlarge")],
         [InlineKeyboardButton("Назад", callback_data="action_back"),
@@ -539,7 +543,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data[user_id].pop('video', None)
         except Exception as e:
             logger.error(f"Ошибка видео: {e}")
-            await update.message.reply_text("Ошибка обработки видео.")
+            await update.message.reply_text("Ошибка обработки видео. Попробуйте файл меньшего размера.")
     else:
         await update.message.reply_text("Видео получено. Используй /video_text для добавления текста.")
 
@@ -629,8 +633,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data[user_id].pop(key, None)
 
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        await update.message.reply_text("Ошибка. Попробуй снова.")
+        logger.error(f"Ошибка обработки: {e}")
+        await update.message.reply_text("Ошибка обработки файла. Проверьте формат и размер файла.")
 
 
 # === КЛАССИЧЕСКИЙ МЕМ ===
@@ -861,19 +865,24 @@ def add_text_to_gif(gif_bytes: io.BytesIO, text: str, options: dict = None) -> i
     except EOFError:
         pass
 
-    # Шрифт
-    font_paths = [os.path.join(FONT_DIR, font_name), font_name]
-    font = ImageFont.load_default()
-    for path in font_paths:
-        try:
-            font = ImageFont.truetype(path, 40)
-            break
-        except:
-            continue
+    # Шрифт из кэша
+    font_key = font_name
+    if font_key not in font_cache:
+        font_paths = [os.path.join(FONT_DIR, font_name), font_name]
+        font_cache[font_key] = ImageFont.load_default()
+        for path in font_paths:
+            try:
+                font_cache[font_key] = ImageFont.truetype(path, 40)
+                break
+            except Exception as e:
+                logger.warning(f"Не удалось загрузить шрифт {path}: {e}")
+    font = font_cache[font_key]
 
-    # Обработка кадров
+    # Обработка кадров (ограничить до 100 кадров для производительности)
     processed_frames = []
-    for i, frame in enumerate(frames):
+    max_frames = min(len(frames), 100)
+    for i in range(max_frames):
+        frame = frames[i]
         draw = ImageDraw.Draw(frame)
         w, h = frame.size
 
@@ -887,7 +896,7 @@ def add_text_to_gif(gif_bytes: io.BytesIO, text: str, options: dict = None) -> i
 
         # Анимация
         if animate == 'fade':
-            alpha = int(255 * (i / len(frames)))
+            alpha = max(128, int(255 * (i / max(1, max_frames - 1))))
             text_color_with_alpha = text_color + (alpha,)
         else:
             text_color_with_alpha = text_color
@@ -898,9 +907,13 @@ def add_text_to_gif(gif_bytes: io.BytesIO, text: str, options: dict = None) -> i
 
         # Водяной знак
         wm_text = "@memfy_bot"
-        wm_font = ImageFont.truetype(os.path.join(FONT_DIR, "Roboto_Bold.ttf"), 16) if os.path.exists(os.path.join(FONT_DIR, "Roboto_Bold.ttf")) else ImageFont.load_default()
+        wm_font_key = "Roboto_Bold.ttf"
+        if wm_font_key not in font_cache:
+            wm_path = os.path.join(FONT_DIR, "Roboto_Bold.ttf")
+            font_cache[wm_font_key] = ImageFont.truetype(wm_path, 16) if os.path.exists(wm_path) else ImageFont.load_default()
+        wm_font = font_cache[wm_font_key]
         tw_wm, th_wm = draw.textbbox((0,0), wm_text, font=wm_font)[2:]
-        wm_img = Image.new('RGBA', (tw_wm + 10, th_wm + 5), (0,0,0,0))
+        wm_img = Image.new('RGBA', (int(tw_wm + 10), int(th_wm + 5)), (0,0,0,0))
         wm_draw = ImageDraw.Draw(wm_img)
         wm_draw.text((5,0), wm_text, fill=(255,255,255,128), font=wm_font)
         frame.paste(wm_img, (10, 10), wm_img)
@@ -931,76 +944,95 @@ def add_text_to_video(video_bytes: io.BytesIO, text: str, options: dict = None) 
     }
     text_color = color_map.get(color, (255,255,255))
 
-    # Сохранить видео во временный файл
-    temp_video = 'temp_video.mp4'
+    # Сохранить видео во временный файл с уникальным именем
+    temp_video = f'temp_video_{uuid.uuid4()}.mp4'
     with open(temp_video, 'wb') as f:
         f.write(video_bytes.getvalue())
 
-    # Загрузка видео
-    clip = mp.VideoFileClip(temp_video)
+    try:
+        # Загрузка видео
+        clip = mp.VideoFileClip(temp_video)
 
-    # Функция для добавления текста
-    def add_text_frame(frame):
-        img = Image.fromarray(frame)
-        draw = ImageDraw.Draw(img)
-        w, h = img.size
+        # Функция для добавления текста
+        def add_text_frame(frame):
+            img = Image.fromarray(frame)
+            draw = ImageDraw.Draw(img)
+            w, h = img.size
 
-        # Шрифт
-        font_paths = [os.path.join(FONT_DIR, font_name), font_name]
-        font = ImageFont.load_default()
-        for path in font_paths:
-            try:
-                font = ImageFont.truetype(path, 40)
-                break
-            except:
-                continue
+            # Шрифт из кэша
+            font_key = font_name
+            if font_key not in font_cache:
+                font_paths = [os.path.join(FONT_DIR, font_name), font_name]
+                font_cache[font_key] = ImageFont.load_default()
+                for path in font_paths:
+                    try:
+                        font_cache[font_key] = ImageFont.truetype(path, 40)
+                        break
+                    except Exception as e:
+                        logger.warning(f"Не удалось загрузить шрифт {path}: {e}")
+            font = font_cache[font_key]
 
-        # Позиция
-        if position == 'top':
-            y = 10
-        elif position == 'center':
-            y = h // 2 - 20
-        else:  # bottom
-            y = h - 60
+            # Позиция
+            if position == 'top':
+                y = 10
+            elif position == 'center':
+                y = h // 2 - 20
+            else:  # bottom
+                y = h - 60
 
-        # Анимация (простая fade)
-        if animate == 'fade':
-            t = clip.duration
-            alpha = 255  # Для простоты, без fade по времени
-        else:
-            alpha = 255
+            # Анимация (простая fade)
+            if animate == 'fade':
+                alpha = 255  # Для простоты, без fade по времени
+            else:
+                alpha = 255
 
-        text_color_with_alpha = text_color + (alpha,) if alpha < 255 else text_color
+            text_color_with_alpha = text_color + (alpha,) if alpha < 255 else text_color
 
-        # Текст
-        tw, th = draw.textbbox((0,0), text, font=font)[2:]
-        draw.text(((w - tw) // 2, y), text, fill=text_color_with_alpha, font=font)
+            # Текст
+            tw, th = draw.textbbox((0,0), text, font=font)[2:]
+            draw.text(((w - tw) // 2, y), text, fill=text_color_with_alpha, font=font)
 
-        # Водяной знак
-        wm_text = "@memfy_bot"
-        wm_font = ImageFont.truetype(os.path.join(FONT_DIR, "Roboto_Bold.ttf"), 16) if os.path.exists(os.path.join(FONT_DIR, "Roboto_Bold.ttf")) else ImageFont.load_default()
-        tw_wm, th_wm = draw.textbbox((0,0), wm_text, font=wm_font)[2:]
-        wm_img = Image.new('RGBA', (tw_wm + 10, th_wm + 5), (0,0,0,0))
-        wm_draw = ImageDraw.Draw(wm_img)
-        wm_draw.text((5,0), wm_text, fill=(255,255,255,128), font=wm_font)
-        img.paste(wm_img, (10, 10), wm_img)
+            # Водяной знак
+            wm_text = "@memfy_bot"
+            wm_font_key = "Roboto_Bold.ttf"
+            if wm_font_key not in font_cache:
+                wm_path = os.path.join(FONT_DIR, "Roboto_Bold.ttf")
+                font_cache[wm_font_key] = ImageFont.truetype(wm_path, 16) if os.path.exists(wm_path) else ImageFont.load_default()
+            wm_font = font_cache[wm_font_key]
+            tw_wm, th_wm = draw.textbbox((0,0), wm_text, font=wm_font)[2:]
+            wm_img = Image.new('RGBA', (tw_wm + 10, th_wm + 5), (0,0,0,0))
+            wm_draw = ImageDraw.Draw(wm_img)
+            wm_draw.text((5,0), wm_text, fill=(255,255,255,128), font=wm_font)
+            img.paste(wm_img, (10, 10), wm_img)
 
-        return np.array(img)
+            return np.array(img)
 
-    # Применить функцию к каждому кадру
-    video_with_text = clip.fl_image(add_text_frame)
+        # Применить функцию к каждому кадру
+        video_with_text = clip.fl_image(add_text_frame)
 
-    # Сохранить в BytesIO
-    out = io.BytesIO()
-    temp_output = 'temp_output.mp4'
-    video_with_text.write_videofile(temp_output, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None)
-    with open(temp_output, 'rb') as f:
-        out.write(f.read())
-    out.seek(0)
+        # Сохранить в BytesIO (ограничить длительность для производительности)
+        if clip.duration > 60:
+            clip = clip.subclip(0, 60)  # Ограничить до 60 секунд
+        out = io.BytesIO()
+        temp_output = f'temp_output_{uuid.uuid4()}.mp4'
+        video_with_text.write_videofile(temp_output, codec='libx264', audio_codec='aac', fps=24, verbose=False, logger=None)
+        with open(temp_output, 'rb') as f:
+            out.write(f.read())
+        out.seek(0)
 
-    # Очистка
-    os.remove(temp_video)
-    os.remove(temp_output)
+    except Exception as e:
+        logger.error(f"Ошибка обработки видео: {e}")
+        raise
+    finally:
+        # Очистка
+        try:
+            os.remove(temp_video)
+        except FileNotFoundError:
+            pass
+        try:
+            os.remove(temp_output)
+        except (FileNotFoundError, NameError):
+            pass
 
     return out
 
@@ -1012,7 +1044,10 @@ async def gif_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args:
         await update.message.reply_text("Использование: /gif_text \"Текст\" --font Arial --color red --position bottom --animate fade")
         return
-    text = args[0]
+    text = args[0].strip()
+    if not text:
+        await update.message.reply_text("Текст не может быть пустым.")
+        return
     options = parse_options(args[1:])
     user_data[user_id] = {'gif_text': text, 'options': options}
     await update.message.reply_text("Отправь GIF для добавления текста.")
@@ -1026,25 +1061,44 @@ async def video_text_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not args:
         await update.message.reply_text("Использование: /video_text \"Текст\" --font Arial --color red --position bottom --animate fade")
         return
-    text = args[0]
+    text = args[0].strip()
+    if not text:
+        await update.message.reply_text("Текст не может быть пустым.")
+        return
     options = parse_options(args[1:])
     user_data[user_id] = {'video_text': text, 'options': options}
     await update.message.reply_text("Отправь видео для добавления текста.")
 
 def parse_options(args):
     options = {}
-    i = 0
-    while i < len(args):
-        if args[i].startswith('--'):
-            key = args[i][2:]
-            if i + 1 < len(args) and not args[i+1].startswith('--'):
-                options[key] = args[i+1]
-                i += 2
+    try:
+        parsed = shlex.split(' '.join(args))
+        i = 0
+        while i < len(parsed):
+            if parsed[i].startswith('--'):
+                key = parsed[i][2:]
+                if i + 1 < len(parsed) and not parsed[i+1].startswith('--'):
+                    options[key] = parsed[i+1]
+                    i += 2
+                else:
+                    options[key] = True
+                    i += 1
             else:
-                options[key] = True
                 i += 1
-        else:
-            i += 1
+    except ValueError:
+        # Fallback to simple parsing if shlex fails
+        i = 0
+        while i < len(args):
+            if args[i].startswith('--'):
+                key = args[i][2:]
+                if i + 1 < len(args) and not args[i+1].startswith('--'):
+                    options[key] = args[i+1]
+                    i += 2
+                else:
+                    options[key] = True
+                    i += 1
+            else:
+                i += 1
     return options
 
 # === ЗАПУСК ===
