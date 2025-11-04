@@ -411,6 +411,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await context.bot.get_file(update.message.document.file_id)
         is_gif = True
         media_type = 'gif'
+    elif update.message.video and update.message.video.mime_type == 'video/mp4':
+        # Обработка MP4 видео как GIF
+        file = await context.bot.get_file(update.message.video.file_id)
+        is_gif = True
+        media_type = 'gif'
     else:
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
