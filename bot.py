@@ -60,7 +60,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if chat_type in ['group', 'supergroup']:
         await update.message.reply_text(
-            "Прикрепи фото/гиф/видео и попробуй создать мем!:)\n\n"
+            "Прикрепи фото и попробуй создать мем!:)\n\n"
             "В группе:\n"
             "1. Отправь медиа с подписью: @memfy_bot\n"
             "2. Выбери тип\n"
@@ -68,9 +68,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text(
-            "Прикрепи фото/гиф/видео и посмотри что получится!:)\n\n"
+            "Прикрепи фото и посмотри что получится!:)\n\n"
             "Как пользоваться:\n"
-            "1. Отправь фото/гиф/видео\n"
+            "1. Отправь фото\n"
             "2. Выбери тип: мем или демотиватор\n"
             "3. Настрой шрифт, размер, цвет, фон, рамку\n"
             "4. Отправь текст: 'Верхний|Нижний'\n\n"
@@ -778,4 +778,5 @@ def main():
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
+
     main()
