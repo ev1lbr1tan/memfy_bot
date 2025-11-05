@@ -1,6 +1,7 @@
 import logging
 import random
 import os
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
@@ -366,7 +367,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_messages[user_id] = []
             user_data[user_id].pop('photo', None)
         except Exception as e:
-            logger.error(f"Шакализация: {e}")
+            logger.error(f"Шакализация error: {e}", exc_info=True)
             await query.edit_message_text("Ошибка.")
         return
 
@@ -401,12 +402,25 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.animation:
         file = await context.bot.get_file(update.message.animation.file_id)
         is_gif = True
+        duration = update.message.animation.duration
+        if duration > 10:
+            await update.message.reply_text("GIF слишком длинная (макс 10 сек).")
+            return
     elif update.message.video:
         file = await context.bot.get_file(update.message.video.file_id)
         is_video = True
+        duration = update.message.video.duration
+        if duration > 10:
+            await update.message.reply_text("Видео слишком длинное (макс 10 сек).")
+            return
     else:
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
+
+    # Проверка размера файла (макс 50 MB)
+    if file.file_size > 50 * 1024 * 1024:
+        await update.message.reply_text("Файл слишком большой (макс 50 MB).")
+        return
 
     media_bytes = io.BytesIO()
     await file.download_to_memory(media_bytes)
@@ -506,7 +520,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not MOVIEPY_AVAILABLE:
                     await update.message.reply_text("Обработка GIF/видео недоступна: отсутствует moviepy.")
                     return
-                out_bytes, out_is_gif = create_classic_meme_video_or_gif(media_bytes, top, bottom, font, prefer_gif=is_gif)
+                out_bytes, out_is_gif = await create_classic_meme_video_or_gif(media_bytes, top, bottom, font, prefer_gif=is_gif)
                 if out_is_gif:
                     await update.message.reply_animation(animation=out_bytes, caption="Готово!")
                 else:
@@ -553,7 +567,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data[user_id].pop(key, None)
 
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"Ошибка в handle_text: {e}", exc_info=True)
         await update.message.reply_text("Ошибка. Попробуй снова.")
 
 
@@ -763,7 +777,7 @@ def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.Byte
 
 
 # === ОБРАБОТКА GIF/ВИДЕО (moviepy) ===
-def create_classic_meme_video_or_gif(media_bytes: io.BytesIO, top_text: str, bottom_text: str, font_file: str = "Impact.ttf", prefer_gif: bool = True) -> (io.BytesIO, bool):
+async def create_classic_meme_video_or_gif(media_bytes: io.BytesIO, top_text: str, bottom_text: str, font_file: str = "Impact.ttf", prefer_gif: bool = True) -> tuple[io.BytesIO, bool]:
     """
     Возвращает (bytes_io, is_gif)
     Если moviepy не доступен — вернёт исходный поток как mp4/gif и флаг False.
@@ -800,11 +814,13 @@ def create_classic_meme_video_or_gif(media_bytes: io.BytesIO, top_text: str, bot
                                   color='white', stroke_color='black', stroke_width=2).set_pos(("center", bottom_y)).set_duration(clip.duration)
             txt_clips.append(txt_bottom)
         comp = CompositeVideoClip([clip, *txt_clips])
-        # Пишем результат
+        # Пишем результат с оптимизацией: низкое качество, сжатие
         if out_is_gif:
-            comp.write_gif(out_path, program='imageio', fps=clip.fps)
+            # Для GIF: низкий fps, оптимизация
+            comp.write_gif(out_path, program='imageio', fps=min(10, clip.fps), optimize=True, fuzz=5)
         else:
-            comp.write_videofile(out_path, codec='libx264', audio=False, threads=0, preset='medium', logger=None)
+            # Для видео: низкое качество, сжатие
+            comp.write_videofile(out_path, codec='libx264', audio=False, threads=0, preset='ultrafast', bitrate='500k', logger=None)
         # Читаем результат в BytesIO
         with open(out_path, "rb") as f:
             data = f.read()
@@ -812,7 +828,7 @@ def create_classic_meme_video_or_gif(media_bytes: io.BytesIO, top_text: str, bot
         out.seek(0)
         return out, out_is_gif
     except Exception as e:
-        logger.error(f"create_classic_meme_video_or_gif error: {e}")
+        logger.error(f"create_classic_meme_video_or_gif error: {e}", exc_info=True)
         # fallback: вернуть исходный
         media_bytes.seek(0)
         return media_bytes, False
