@@ -8,6 +8,13 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 import io
 import tempfile
 
+# === ЛОГИРОВАНИЕ ===
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 # moviepy используется для обработки GIF/видео
 try:
     from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
@@ -19,13 +26,6 @@ except ImportError as e:
 except Exception as e:
     MOVIEPY_AVAILABLE = False
     logger.error(f"Не удалось импортировать moviepy: Общая ошибка - {e}", exc_info=True)
-
-# === ЛОГИРОВАНИЕ ===
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
 
 # === ШРИФТЫ В ТОЙ ЖЕ ПАПКЕ, ЧТО И bot.py ===
 FONT_DIR = os.path.dirname(__file__)  # ← шрифты рядом с bot.py
