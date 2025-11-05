@@ -1,12 +1,10 @@
 import logging
 import random
 import os
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 import io
-import tempfile
 
 # === ЛОГИРОВАНИЕ ===
 logging.basicConfig(
@@ -21,18 +19,6 @@ def log_media_processing(user_id: int, action: str, details: str = ""):
 
 def log_error(user_id: int, error: str, exc_info: bool = False):
     logger.error(f"User {user_id}: {error}", exc_info=exc_info)
-
-# moviepy используется для обработки GIF/видео
-try:
-    from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
-    MOVIEPY_AVAILABLE = True
-    logger.info("moviepy успешно импортирован")
-except ImportError as e:
-    MOVIEPY_AVAILABLE = False
-    logger.error(f"Не удалось импортировать moviepy: ImportError - {e}", exc_info=True)
-except Exception as e:
-    MOVIEPY_AVAILABLE = False
-    logger.error(f"Не удалось импортировать moviepy: Общая ошибка - {e}", exc_info=True)
 
 # === ШРИФТЫ В ТОЙ ЖЕ ПАПКЕ, ЧТО И bot.py ===
 FONT_DIR = os.path.dirname(__file__)  # ← шрифты рядом с bot.py
@@ -402,58 +388,27 @@ def show_font_selection(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
-# === ОБРАБОТКА МЕДИА (ФОТО / GIF / ВИДЕО) ===
+# === ОБРАБОТКА МЕДИА (ТОЛЬКО ФОТО) ===
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_type = update.message.chat.type
 
-    is_gif = False
-    is_video = False
-
     log_media_processing(user_id, "Начата обработка медиа")
 
-    # Приоритет: animation (gif), затем video, затем фото
-    if update.message.animation:
-        file = await context.bot.get_file(update.message.animation.file_id)
-        is_gif = True
-        duration = update.message.animation.duration
-        if duration > 10:
-            log_error(user_id, f"GIF слишком длинная: {duration} сек")
-            await update.message.reply_text("GIF слишком длинная (макс 10 сек).")
-            return
-        log_media_processing(user_id, "Обработка GIF", f"длительность: {duration} сек")
-    elif update.message.video:
-        file = await context.bot.get_file(update.message.video.file_id)
-        is_video = True
-        duration = update.message.video.duration
-        if duration > 10:
-            log_error(user_id, f"Видео слишком длинное: {duration} сек")
-            await update.message.reply_text("Видео слишком длинное (макс 10 сек).")
-            return
-        log_media_processing(user_id, "Обработка видео", f"длительность: {duration} сек")
-    else:
-        photo = update.message.photo[-1]
-        file = await context.bot.get_file(photo.file_id)
-        log_media_processing(user_id, "Обработка фото")
+    # Проверяем, что это фото, игнорируем GIF и видео
+    if update.message.animation or update.message.video:
+        await update.message.reply_text("GIF и видео не поддерживаются. Отправьте статическое фото.")
+        return
+
+    photo = update.message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    log_media_processing(user_id, "Обработка фото")
 
     # Проверка размера файла (макс 50 MB)
     if file.file_size > 50 * 1024 * 1024:
         log_error(user_id, f"Файл слишком большой: {file.file_size} байт")
         await update.message.reply_text("Файл слишком большой (макс 50 MB).")
         return
-
-    # Проверка размера изображения для GIF/видео (макс 1920x1080)
-    if is_gif or is_video:
-        if hasattr(update.message, 'animation') and update.message.animation:
-            width, height = update.message.animation.width, update.message.animation.height
-        elif hasattr(update.message, 'video') and update.message.video:
-            width, height = update.message.video.width, update.message.video.height
-        else:
-            width, height = 0, 0
-        if width > 1920 or height > 1080:
-            log_error(user_id, f"Разрешение слишком высокое: {width}x{height}")
-            await update.message.reply_text("Разрешение слишком высокое (макс 1920x1080).")
-            return
 
     media_bytes = io.BytesIO()
     await file.download_to_memory(media_bytes)
@@ -481,8 +436,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_data:
         user_data[user_id] = {}
     user_data[user_id]['photo'] = media_bytes
-    user_data[user_id]['is_gif'] = is_gif
-    user_data[user_id]['is_video'] = is_video
 
     if caption and '|' in caption:
         texts = caption.split('|', 1)
@@ -499,7 +452,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Зашакалить", callback_data="shakalize_menu")],
     ]
     sent = await update.message.reply_text(
-        "Медиа получено!\n\nВыбери действие:",
+        "Фото получено!\n\nВыбери действие:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
     user_messages[user_id].append(sent.message_id)
@@ -545,43 +498,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_messages[user_id] = []
 
             font = user_data[user_id]['classic_font']
-            is_gif = user_data[user_id].get('is_gif', False)
-            is_video = user_data[user_id].get('is_video', False)
 
-            if is_gif or is_video:
-                # Обработка GIF/видео: вложение текста по кадрам
-                log_media_processing(user_id, "Начата обработка GIF/видео с текстом")
-                try:
-                    if MOVIEPY_AVAILABLE:
-                        out_bytes, out_is_gif = await asyncio.wait_for(
-                            create_classic_meme_video_or_gif(media_bytes, top, bottom, font, prefer_gif=is_gif),
-                            timeout=60.0  # таймаут 60 сек
-                        )
-                        if out_is_gif:
-                            await update.message.reply_animation(animation=out_bytes, caption="Готово!")
-                        else:
-                            await update.message.reply_video(video=out_bytes, caption="Готово!")
-                        log_media_processing(user_id, "Обработка GIF/видео завершена с MoviePy")
-                    else:
-                        log_error(user_id, "MoviePy недоступен, возвращаем оригинал без текста")
-                        media_bytes.seek(0)
-                        if is_gif:
-                            await update.message.reply_animation(animation=media_bytes, caption="MoviePy недоступен, возвращаем оригинал без текста.")
-                        else:
-                            await update.message.reply_video(video=media_bytes, caption="MoviePy недоступен, возвращаем оригинал без текста.")
-                        return
-                except asyncio.TimeoutError:
-                    log_error(user_id, "Таймаут обработки GIF/видео")
-                    await update.message.reply_text("Обработка заняла слишком много времени. Попробуй с меньшим файлом.")
-                    return
-                except Exception as e:
-                    log_error(user_id, f"Ошибка обработки GIF/видео: {e}", exc_info=True)
-                    await update.message.reply_text("Ошибка обработки GIF/видео.")
-                    return
-            else:
-                log_media_processing(user_id, "Создание классического мема для фото")
-                meme = create_classic_meme(media_bytes, top, bottom, font)
-                await update.message.reply_photo(photo=meme, caption="Готово!")
+            log_media_processing(user_id, "Создание классического мема для фото")
+            meme = create_classic_meme(media_bytes, top, bottom, font)
+            await update.message.reply_photo(photo=meme, caption="Готово!")
 
         else:  # демотиватор (только для фото)
             if 'font_file' not in user_data[user_id]:
@@ -616,7 +536,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_photo(photo=demotivator, caption="Демотиватор готов!")
 
         # Очистка
-        for key in ['photo', 'meme_type', 'classic_font', 'classic_type', 'is_gif', 'is_video',
+        for key in ['photo', 'meme_type', 'classic_font', 'classic_type',
                     'font_file', 'font_size', 'font_color', 'bg_color', 'border_thickness', 'demotivator_type']:
             user_data[user_id].pop(key, None)
 
@@ -836,75 +756,6 @@ def shakalize_image(photo_bytes: io.BytesIO, intensity: str = 'hard') -> io.Byte
         return photo_bytes
 
 
-# === ОБРАБОТКА GIF/ВИДЕО (moviepy) ===
-async def create_classic_meme_video_or_gif(media_bytes: io.BytesIO, top_text: str, bottom_text: str, font_file: str = "Impact.ttf", prefer_gif: bool = True) -> tuple[io.BytesIO, bool]:
-    """
-    Возвращает (bytes_io, is_gif)
-    Если moviepy не доступен — вернёт исходный поток как mp4/gif и флаг False.
-    prefer_gif=True попытается вернуть GIF для анимации (если вход GIF) — иначе mp4.
-    """
-    if not MOVIEPY_AVAILABLE:
-        media_bytes.seek(0)
-        return media_bytes, False
-
-    # Записываем входной байтстрим во временный файл
-    media_bytes.seek(0)
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as in_tmp:
-        in_tmp.write(media_bytes.read())
-        in_path = in_tmp.name
-
-    out_is_gif = prefer_gif
-    with tempfile.NamedTemporaryFile(suffix=".gif" if out_is_gif else ".mp4", delete=False) as out_tmp:
-        out_path = out_tmp.name
-
-    try:
-        clip = VideoFileClip(in_path)
-        fontsize = max(20, int(clip.w / 12))
-        font_path = os.path.join(FONT_DIR, font_file)
-        # TextClip может требовать установки ImageMagick для сложных шрифтов/эффектов.
-        # Попытка создать простые TextClip'ы.
-        txt_clips = []
-        if top_text:
-            txt_top = TextClip(top_text, fontsize=fontsize, font=font_path if os.path.exists(font_path) else None,
-                                color='white', stroke_color='black', stroke_width=2).set_pos(("center", 10)).set_duration(clip.duration)
-            txt_clips.append(txt_top)
-        if bottom_text:
-            bottom_y = clip.h - fontsize * 1.5 - 10
-            txt_bottom = TextClip(bottom_text, fontsize=fontsize, font=font_path if os.path.exists(font_path) else None,
-                                   color='white', stroke_color='black', stroke_width=2).set_pos(("center", bottom_y)).set_duration(clip.duration)
-            txt_clips.append(txt_bottom)
-        comp = CompositeVideoClip([clip, *txt_clips])
-        # Пишем результат с оптимизацией: низкое качество, сжатие
-        if out_is_gif:
-            # Для GIF: низкий fps, оптимизация
-            comp.write_gif(out_path, program='imageio', fps=min(10, clip.fps), optimize=True, fuzz=5)
-        else:
-            # Для видео: низкое качество, сжатие
-            comp.write_videofile(out_path, codec='libx264', audio=False, threads=0, preset='ultrafast', bitrate='500k', logger=None)
-        # Читаем результат в BytesIO
-        with open(out_path, "rb") as f:
-            data = f.read()
-        out = io.BytesIO(data)
-        out.seek(0)
-        return out, out_is_gif
-    except Exception as e:
-        logger.error(f"create_classic_meme_video_or_gif error: {e}", exc_info=True)
-        # fallback: вернуть исходный
-        media_bytes.seek(0)
-        return media_bytes, False
-    finally:
-        try:
-            clip.close()
-        except:
-            pass
-        try:
-            os.unlink(in_path)
-        except:
-            pass
-        try:
-            os.unlink(out_path)
-        except:
-            pass
 
 
 
