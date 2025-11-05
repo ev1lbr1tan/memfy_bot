@@ -2,8 +2,6 @@ import logging
 import random
 import os
 import asyncio
-import cv2
-import numpy as np
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
@@ -35,19 +33,6 @@ except ImportError as e:
 except Exception as e:
     MOVIEPY_AVAILABLE = False
     logger.error(f"Не удалось импортировать moviepy: Общая ошибка - {e}", exc_info=True)
-
-# OpenCV для fallback обработки GIF/видео
-try:
-    import cv2
-    import numpy as np
-    OPENCV_AVAILABLE = True
-    logger.info("OpenCV успешно импортирован")
-except ImportError as e:
-    OPENCV_AVAILABLE = False
-    logger.error(f"Не удалось импортировать OpenCV: ImportError - {e}", exc_info=True)
-except Exception as e:
-    OPENCV_AVAILABLE = False
-    logger.error(f"Не удалось импортировать OpenCV: Общая ошибка - {e}", exc_info=True)
 
 # === ШРИФТЫ В ТОЙ ЖЕ ПАПКЕ, ЧТО И bot.py ===
 FONT_DIR = os.path.dirname(__file__)  # ← шрифты рядом с bot.py
@@ -577,20 +562,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         else:
                             await update.message.reply_video(video=out_bytes, caption="Готово!")
                         log_media_processing(user_id, "Обработка GIF/видео завершена с MoviePy")
-                    elif OPENCV_AVAILABLE:
-                        log_media_processing(user_id, "MoviePy недоступен, используем OpenCV fallback")
-                        out_bytes, out_is_gif = await asyncio.wait_for(
-                            create_classic_meme_video_or_gif_opencv(media_bytes, top, bottom, font, prefer_gif=is_gif),
-                            timeout=60.0  # таймаут 60 сек
-                        )
-                        if out_is_gif:
-                            await update.message.reply_animation(animation=out_bytes, caption="Готово!")
-                        else:
-                            await update.message.reply_video(video=out_bytes, caption="Готово!")
-                        log_media_processing(user_id, "Обработка GIF/видео завершена с OpenCV")
                     else:
-                        log_error(user_id, "Обработка GIF/видео недоступна: отсутствуют MoviePy и OpenCV")
-                        await update.message.reply_text("Обработка GIF/видео недоступна: отсутствуют необходимые библиотеки.")
+                        log_error(user_id, "MoviePy недоступен, возвращаем оригинал без текста")
+                        media_bytes.seek(0)
+                        if is_gif:
+                            await update.message.reply_animation(animation=media_bytes, caption="MoviePy недоступен, возвращаем оригинал без текста.")
+                        else:
+                            await update.message.reply_video(video=media_bytes, caption="MoviePy недоступен, возвращаем оригинал без текста.")
                         return
                 except asyncio.TimeoutError:
                     log_error(user_id, "Таймаут обработки GIF/видео")
@@ -929,106 +907,6 @@ async def create_classic_meme_video_or_gif(media_bytes: io.BytesIO, top_text: st
             pass
 
 
-# === ОБРАБОТКА GIF/ВИДЕО (OpenCV fallback) ===
-async def create_classic_meme_video_or_gif_opencv(media_bytes: io.BytesIO, top_text: str, bottom_text: str, font_file: str = "Impact.ttf", prefer_gif: bool = True) -> tuple[io.BytesIO, bool]:
-    """
-    Fallback функция для обработки GIF/видео с использованием OpenCV.
-    Добавляет текст к каждому кадру.
-    """
-    if not OPENCV_AVAILABLE:
-        media_bytes.seek(0)
-        return media_bytes, False
-
-    # Записываем входной байтстрим во временный файл
-    media_bytes.seek(0)
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as in_tmp:
-        in_tmp.write(media_bytes.read())
-        in_path = in_tmp.name
-
-    out_is_gif = prefer_gif
-    with tempfile.NamedTemporaryFile(suffix=".gif" if out_is_gif else ".mp4", delete=False) as out_tmp:
-        out_path = out_tmp.name
-
-    try:
-        cap = cv2.VideoCapture(in_path)
-        if not cap.isOpened():
-            raise ValueError("Не удалось открыть видео файл")
-
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        # Ограничения для Railway: максимум 10 сек, низкое разрешение
-        max_frames = min(total_frames, int(fps * 10))
-        if width > 1280 or height > 720:
-            width, height = 1280, 720
-
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-
-        font_path = os.path.join(FONT_DIR, font_file)
-        font_scale = max(0.5, width / 800)
-        thickness = max(1, int(font_scale * 2))
-
-        frames = []
-        frame_count = 0
-
-        while cap.isOpened() and frame_count < max_frames:
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            # Изменяем размер кадра если нужно
-            if frame.shape[1] != width or frame.shape[0] != height:
-                frame = cv2.resize(frame, (width, height))
-
-            # Добавляем текст
-            if top_text:
-                cv2.putText(frame, top_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
-            if bottom_text:
-                text_size = cv2.getTextSize(bottom_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
-                bottom_y = height - 10
-                cv2.putText(frame, bottom_text, (10, bottom_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
-
-            out.write(frame)
-            frame_count += 1
-
-        cap.release()
-        out.release()
-
-        if out_is_gif:
-            # Конвертируем в GIF с помощью imageio
-            import imageio
-            reader = imageio.get_reader(out_path)
-            writer = imageio.get_writer(out_path.replace('.mp4', '.gif'), fps=min(10, fps))
-            for frame in reader:
-                writer.append_data(frame)
-            writer.close()
-            reader.close()
-            out_path = out_path.replace('.mp4', '.gif')
-
-        # Читаем результат в BytesIO
-        with open(out_path, "rb") as f:
-            data = f.read()
-        out_bytes = io.BytesIO(data)
-        out_bytes.seek(0)
-        return out_bytes, out_is_gif
-
-    except Exception as e:
-        logger.error(f"create_classic_meme_video_or_gif_opencv error: {e}", exc_info=True)
-        # fallback: вернуть исходный
-        media_bytes.seek(0)
-        return media_bytes, False
-    finally:
-        try:
-            os.unlink(in_path)
-        except:
-            pass
-        try:
-            os.unlink(out_path)
-        except:
-            pass
 
 
 # === ЗАПУСК ===
