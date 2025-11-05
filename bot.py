@@ -12,8 +12,13 @@ import tempfile
 try:
     from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
     MOVIEPY_AVAILABLE = True
-except Exception:
+    logger.info("moviepy успешно импортирован")
+except ImportError as e:
     MOVIEPY_AVAILABLE = False
+    logger.error(f"Не удалось импортировать moviepy: ImportError - {e}", exc_info=True)
+except Exception as e:
+    MOVIEPY_AVAILABLE = False
+    logger.error(f"Не удалось импортировать moviepy: Общая ошибка - {e}", exc_info=True)
 
 # === ЛОГИРОВАНИЕ ===
 logging.basicConfig(

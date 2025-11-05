@@ -1,0 +1,9 @@
+{
+  "build": {
+    "builder": "NIXPACKS",
+    "buildCommand": "apt-get update && apt-get install -y ffmpeg imagemagick && pip install -r requirements.txt"
+  },
+  "deploy": {
+    "startCommand": "python bot.py"
+  }
+}
